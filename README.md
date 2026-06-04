@@ -102,3 +102,67 @@ lower-friction path is to attach to the VM the stock Terminal already runs
 PoC. The VT core is verified by JVM tests; the GPU and PTY layers are written
 for an on-device build (they require the Android SDK/NDK, which CI/dev machines
 must provide).
+
+---
+
+## 開発ログ (Development Log)
+
+新しいエントリを上に追記していく。日付は JST。
+
+### 2026-06-04 — AVF VM バックエンドの下準備
+
+- **背景**: 「配布せず自分の端末だけなら `adb shell pm grant ... MANAGE_VIRTUAL_MACHINE`
+  でよくないか？」という問い。
+- **調査結論**:
+  - `MANAGE_VIRTUAL_MACHINE` は `signature|development` 相当で **`development`
+    フラグ持ち** → プラットフォーム署名なしの普通のアプリでも `adb pm grant`
+    で付与可能。**個人端末ならこの方針でOK**。
+  - ただしカスタムVM（自前カーネル/rootfs = 本物のDebianを丸ごと）は追加で
+    `USE_CUSTOM_VIRTUAL_MACHINE` が必要で、**debuggable / root ビルド前提**。
+    市販の user ビルドでは拒否されがち。Microdroid系の保護VMなら前者だけで足りる。
+  - AVF API (`android.system.virtualmachine.*`) は **`@SystemApi`**（公開SDK外）。
+    system stub かリフレクションが要る。権限だけの問題ではない。
+- **意思決定**: VMバックエンドは **今は着手せず、下準備のみ**。当面ローカルPTY継続。
+  - 推奨路線（将来）: 自前でVMを起こすのではなく、**標準ターミナルが既に動かしている
+    Debian VM に SSH / vsock で接続するフロント方式**。権限・SystemApi の壁を回避でき、
+    kitty の本質（フロントエンド）にも合致。
+- **追加物**:
+  - `AndroidManifest.xml` に `MANAGE_VIRTUAL_MACHINE` を宣言（`pm grant` 手順と
+    注意をコメントで明記）。デフォルトの `LocalPtyBackend` は権限不要のまま。
+  - `backend/AvfVmBackend.kt`（`TerminalBackend` 実装の雛形スタブ、`TODO()`）。
+    差し替えは `TerminalController` の1行のみ。
+  - 本 README / `docs/ARCHITECTURE.md` に決定記録を追記。
+
+### 2026-06-04 — PoC 初版
+
+- **目的**: kitty の Android 版。仮説検証 PoC（そのまま本番に育てる前提で整備）。
+- **検証する仮説**:
+  1. Android で kitty 流のGPU描画ターミナルが成立するか。
+  2. グリフをアトラスに1度だけラスタライズ → セル参照で画面全体を一括描画できるか。
+  3. 当面 Pixel / Android 16 (arm64) のみで良い。
+- **意思決定（ユーザー確認済み）**:
+  - バックエンド: ローカルPTYで実装しつつ、**両方を見据えて `TerminalBackend`
+    インターフェースで抽象化**（将来 SSH / AVF VM を差し込み可能に）。
+  - 描画API: **OpenGL ES 3.2** で実装、ただし **Vulkan に差し替え可能**な構成
+    （`GpuBackend` インターフェース + 手書きEGL + 生 SurfaceView）。
+- **実装したレイヤー**:
+  - ネイティブPTY: `cpp/pty.c`（`forkpty()` で shell を起動）+ JNI ブリッジ `Pty.kt`。
+  - バックエンド: `TerminalBackend` / `LocalPtyBackend`（リーダースレッド）。
+  - エミュレータ（純Kotlin）: `VtParser` + `TerminalGrid`
+    （C0制御、UTF-8逐次、CSIカーソル/消去/編集、スクロール領域、SGR 16/256/truecolor、
+    代替画面、DSR応答）+ `TerminalEmulator`（ロックで直列化、`FrameSnapshot` 供給）。
+  - 描画: `GlesGpuBackend`（グリフアトラス `GL_R8` + 1回の `glDrawArraysInstanced`、
+    `mix(bg,fg,coverage)` の1パス）/ `EglCore` / `GlyphAtlas` / `ShaderProgram` /
+    `RenderThread`（HandlerThread、描画リクエストはコアレス）。
+  - ビュー/入力: `TerminalSurfaceView` 相当 + `KeyEncoder` + `MainActivity`。
+- **検証**:
+  - Android SDK/NDK がコンテナに無いため **APKフルビルドは未実施**。
+  - 代わりに Kotlin コンパイラを取得し、**純Kotlinなエミュレータ層を型チェック＋実動作確認**。
+    CRLF / カーソル位置 / SGR / 画面消去 / 遅延ラップ / DSR応答(`ESC[2;5R`) /
+    フィード跨ぎのUTF-8デコード(U+3042) すべて合格。`TerminalEmulatorTest`（JUnit）に収録。
+- **既知の制約 / 未検証**:
+  - GPU層・JNI層は実機未実行 → 初回ビルドで微修正の可能性。
+  - 全角（CJK幅2）/ 合字 / sixel・kittyグラフィック / スクロールバックは未実装。
+- **次の一手（ロードマップ）**: スクロールバック → 全角 → カーソル形状/選択 →
+  合字・Nerd Font → グラフィック → Vulkan バックエンド → AVF VM バックエンド。
+  （詳細は `docs/ARCHITECTURE.md`）
