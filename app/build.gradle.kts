@@ -7,6 +7,10 @@ android {
     namespace = "dev.nyandroid.terminal"
     compileSdk = 36
 
+    // Pinned for reproducible native (CMake) builds in CI; keep in sync with
+    // the NDK installed by .github/workflows/build.yml.
+    ndkVersion = "27.2.12479018"
+
     defaultConfig {
         applicationId = "dev.nyandroid.terminal"
         minSdk = 34
