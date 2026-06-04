@@ -30,6 +30,27 @@ emulator/renderer can later sit on top of:
 - the **Android 16 Linux VM** (Debian on AVF) — the most "kitty on a real
   Linux" experience, gated behind privileged APIs.
 
+#### Decision record: AVF VM backend (deferred)
+
+The current direction is **keep the local PTY; lay groundwork only**
+(`AvfVmBackend` is a stub implementing `TerminalBackend`). When we pick the VM
+route up, two strategies:
+
+1. **Attach to the existing VM (preferred).** Android 16's stock Terminal
+   already boots a Debian guest; we connect over SSH / vsock and just stream
+   bytes. No privileged permission, no `@SystemApi`. This matches kitty's nature
+   — it's a front-end, not a hypervisor.
+2. **Boot our own VM via AVF.** Uses `android.system.virtualmachine.*` (a
+   `@SystemApi` → system stubs or reflection). Permission notes:
+   - `MANAGE_VIRTUAL_MACHINE` has the `development` protection flag, so for a
+     personal device it is grantable without platform signing:
+     `adb shell pm grant dev.nyandroid.terminal android.permission.MANAGE_VIRTUAL_MACHINE`.
+   - A *custom* VM (own kernel/rootfs) also needs `USE_CUSTOM_VIRTUAL_MACHINE`,
+     restricted to debuggable/rooted builds — a stock retail (user) build will
+     typically refuse to grant it. Protected/Microdroid VMs need only the former.
+
+Either way nothing above the backend seam changes.
+
 ### 2. Emulator — `TerminalEmulator` (`VtParser` + `TerminalGrid`)
 
 Pure Kotlin, no Android dependencies (so it is unit-testable on the JVM).

@@ -32,7 +32,7 @@ Three deliberate seams keep the design open:
 
 | Seam | Interface | PoC implementation | Future |
 |------|-----------|--------------------|--------|
-| Backend | `TerminalBackend` | `LocalPtyBackend` (forkpty + `/system/bin/sh`) | SSH, Android 16 AVF VM |
+| Backend | `TerminalBackend` | `LocalPtyBackend` (forkpty + `/system/bin/sh`) | SSH, Android 16 AVF VM (`AvfVmBackend` stub) |
 | Rendering | `GpuBackend` | `GlesGpuBackend` (OpenGL ES 3.2) | Vulkan |
 | Emulation | `TerminalEmulator` | `VtParser` + `TerminalGrid` | wide chars, sixel/kitty graphics |
 
@@ -79,6 +79,23 @@ on Android 16.
 
 > The emulator core (`dev.nyandroid.terminal.emulator`) is pure Kotlin/JVM and
 > is unit-tested without a device; the GPU/PTY layers need real hardware.
+
+### (Future) Android 16 Linux VM backend
+
+The PoC runs a local PTY and needs no special permissions. The groundwork for a
+VM backend is in place (`AvfVmBackend` stub + manifest declaration). On a
+personal device the management permission can be granted without platform
+signing because it carries the `development` protection flag:
+
+```bash
+adb shell pm grant dev.nyandroid.terminal android.permission.MANAGE_VIRTUAL_MACHINE
+```
+
+Caveats: booting a *custom* full-Linux VM (own kernel/rootfs) also needs
+`USE_CUSTOM_VIRTUAL_MACHINE`, which is restricted to debuggable/rooted builds,
+and the AVF API (`android.system.virtualmachine.*`) is a `@SystemApi`. The
+lower-friction path is to attach to the VM the stock Terminal already runs
+(SSH / vsock) — see `docs/ARCHITECTURE.md`.
 
 ## Status
 
