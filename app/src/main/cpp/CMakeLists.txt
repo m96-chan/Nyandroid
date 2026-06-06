@@ -11,3 +11,8 @@ find_library(log-lib log)
 
 target_link_libraries(nyandroid-pty
     ${log-lib})
+
+# Android 16+ Pixel devices use 16KB page sizes. Align ELF LOAD segments
+# accordingly so the OS can mmap the library without the compatibility warning.
+target_link_options(nyandroid-pty PRIVATE
+    "LINKER:-z,max-page-size=16384")

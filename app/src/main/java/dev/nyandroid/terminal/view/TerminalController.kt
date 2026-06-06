@@ -1,8 +1,9 @@
 package dev.nyandroid.terminal.view
 
+import android.content.Context
 import android.util.Log
 import android.view.Surface
-import dev.nyandroid.terminal.backend.LocalPtyBackend
+import dev.nyandroid.terminal.backend.SshBackend
 import dev.nyandroid.terminal.backend.TerminalBackend
 import dev.nyandroid.terminal.emulator.TerminalEmulator
 import dev.nyandroid.terminal.font.CellMetrics
@@ -16,13 +17,13 @@ import dev.nyandroid.terminal.render.gles.GlesGpuBackend
  * GPU renderer — and owns geometry. The view delegates surface and input
  * events here; everything below stays decoupled from Android view plumbing.
  */
-class TerminalController(fontSpec: FontSpec) {
+class TerminalController(context: Context, fontSpec: FontSpec) {
 
     val metrics: CellMetrics = CellMetrics.measure(fontSpec)
 
     private val rasterizer = GlyphRasterizer(fontSpec, metrics)
     private val gpu = GlesGpuBackend(rasterizer)
-    private val backend: TerminalBackend = LocalPtyBackend()
+    private val backend: TerminalBackend = SshBackend(context)
     private val emulator = TerminalEmulator(DEFAULT_COLS, DEFAULT_ROWS) { bytes ->
         backend.write(bytes)
     }
@@ -43,7 +44,12 @@ class TerminalController(fontSpec: FontSpec) {
         applyGeometry(width, height)
         if (!started) {
             emulator.resize(cols, rows)
-            backend.start(cols, rows)
+            try {
+                backend.start(cols, rows)
+                Log.i(TAG, "Backend started: ${cols}x${rows}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Backend failed to start", e)
+            }
             started = true
         }
         renderThread.onSurfaceAvailable(surface, width, height)

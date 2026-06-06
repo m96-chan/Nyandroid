@@ -31,7 +31,7 @@ class TerminalView @JvmOverloads constructor(
     init {
         val density = resources.displayMetrics.density
         val fontSpec = FontSpec(textSizePx = DEFAULT_FONT_SP * density)
-        controller = TerminalController(fontSpec)
+        controller = TerminalController(context, fontSpec)
 
         holder.addCallback(this)
         isFocusable = true

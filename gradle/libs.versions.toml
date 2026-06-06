@@ -5,12 +5,17 @@ coreKtx = "1.15.0"
 appcompat = "1.7.0"
 activity = "1.9.3"
 junit = "4.13.2"
+sshj = "0.40.0"
+slf4j = "2.0.16"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-activity = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
+bouncycastle = { group = "org.bouncycastle", name = "bcprov-jdk18on", version = "1.80.2" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -65,11 +65,21 @@ android {
     buildFeatures {
         buildConfig = true
     }
+
+    packaging {
+        resources {
+            // BouncyCastle (sshj transitive dep) ships duplicate OSGI manifests.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity)
+    implementation(libs.sshj)
+    implementation(libs.slf4j.nop)
+    implementation(libs.bouncycastle)
     testImplementation(libs.junit)
 }

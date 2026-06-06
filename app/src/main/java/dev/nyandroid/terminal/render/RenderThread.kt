@@ -2,6 +2,7 @@ package dev.nyandroid.terminal.render
 
 import android.os.Handler
 import android.os.HandlerThread
+import android.util.Log
 import android.view.Surface
 import dev.nyandroid.terminal.emulator.FrameSnapshot
 import java.util.concurrent.atomic.AtomicBoolean
@@ -23,6 +24,7 @@ class RenderThread(
     private lateinit var handler: Handler
     private val frame = FrameSnapshot()
     private val renderPending = AtomicBoolean(false)
+    private var surfaceReady = false
 
     fun start() {
         thread.start()
@@ -30,23 +32,43 @@ class RenderThread(
     }
 
     fun onSurfaceAvailable(surface: Surface, width: Int, height: Int) {
-        handler.post { gpu.onSurfaceCreated(surface, width, height) }
+        handler.post {
+            try {
+                if (!surface.isValid) {
+                    Log.w(TAG, "Surface already invalid, skipping EGL init")
+                    return@post
+                }
+                gpu.onSurfaceCreated(surface, width, height)
+                surfaceReady = true
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create GPU surface", e)
+                surfaceReady = false
+            }
+        }
         requestRender()
     }
 
     fun onSurfaceChanged(width: Int, height: Int) {
-        handler.post { gpu.onSurfaceChanged(width, height) }
+        handler.post {
+            if (surfaceReady) gpu.onSurfaceChanged(width, height)
+        }
         requestRender()
     }
 
     fun onSurfaceDestroyed() {
-        handler.post { gpu.onSurfaceDestroyed() }
+        handler.post {
+            if (surfaceReady) {
+                gpu.onSurfaceDestroyed()
+                surfaceReady = false
+            }
+        }
     }
 
     fun requestRender() {
         if (renderPending.compareAndSet(false, true)) {
             handler.post {
                 renderPending.set(false)
+                if (!surfaceReady) return@post
                 frameSource(frame)
                 gpu.renderFrame(frame)
             }
@@ -54,7 +76,14 @@ class RenderThread(
     }
 
     fun quit() {
-        handler.post { gpu.onSurfaceDestroyed() }
+        handler.post {
+            if (surfaceReady) gpu.onSurfaceDestroyed()
+            surfaceReady = false
+        }
         thread.quitSafely()
+    }
+
+    private companion object {
+        const val TAG = "RenderThread"
     }
 }
