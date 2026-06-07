@@ -14,7 +14,7 @@ package dev.nyandroid.terminal.emulator
  *
  * Not thread-safe by itself; [TerminalEmulator] owns the lock.
  */
-class TerminalGrid(cols: Int, rows: Int) {
+class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBACK) {
 
     var cols = cols.coerceAtLeast(1)
         private set
@@ -25,6 +25,10 @@ class TerminalGrid(cols: Int, rows: Int) {
     private var fg = IntArray(cp.size)
     private var bg = IntArray(cp.size)
     private var fl = IntArray(cp.size)
+
+    /** Scrollback history for the primary screen. */
+    var scrollback = ScrollbackBuffer(scrollbackLines, this.cols)
+        private set
 
     var cursorRow = 0
         private set
@@ -51,7 +55,8 @@ class TerminalGrid(cols: Int, rows: Int) {
     private var savedFlags = 0
 
     // Alternate screen state.
-    private var onAltScreen = false
+    var onAltScreen = false
+        private set
     private var altSavedCp: IntArray? = null
     private var altSavedFg: IntArray? = null
     private var altSavedBg: IntArray? = null
@@ -182,6 +187,14 @@ class TerminalGrid(cols: Int, rows: Int) {
 
     fun scrollUp(n: Int) {
         val count = n.coerceIn(1, scrollBottom - scrollTop + 1)
+        // Save lines about to scroll off the top into scrollback (primary
+        // screen, full-width scroll region only — partial regions like tmux
+        // status bars must not pollute history).
+        if (!onAltScreen && scrollTop == 0) {
+            for (row in 0 until count) {
+                scrollback.pushLine(cp, fg, bg, fl, idx(row, 0), cols)
+            }
+        }
         for (row in scrollTop..(scrollBottom - count)) {
             val src = idx(row + count, 0)
             val dst = idx(row, 0)
@@ -414,6 +427,7 @@ class TerminalGrid(cols: Int, rows: Int) {
         cursorVisible = true
         wrapPending = false
         onAltScreen = false
+        scrollback.clear()
     }
 
     // --- Geometry -----------------------------------------------------------
@@ -453,6 +467,7 @@ class TerminalGrid(cols: Int, rows: Int) {
         // Alt-screen save buffers are invalidated by a resize.
         altSavedCp = null; altSavedFg = null; altSavedBg = null; altSavedFl = null
         onAltScreen = false
+        scrollback = scrollback.resize(nc)
     }
 
     // --- Snapshot -----------------------------------------------------------
@@ -460,36 +475,70 @@ class TerminalGrid(cols: Int, rows: Int) {
     /**
      * Copies the visible screen into [out], baking in reverse-video and a block
      * cursor so the renderer can stay oblivious to terminal semantics.
+     *
+     * @param viewportOffset number of scrollback lines above the screen top.
+     *   0 = live view (default), >0 = scrolled back into history.
      */
-    fun snapshotInto(out: FrameSnapshot) {
+    fun snapshotInto(out: FrameSnapshot, viewportOffset: Int = 0) {
         out.ensureCapacity(cols, rows)
         val oc = out.codePoints
         val of = out.fg
         val ob = out.bg
         val os = out.styleFlags
-        val cursorIdx = if (cursorVisible) idx(cursorRow, cursorCol) else -1
-        for (i in cp.indices) {
-            var f = fg[i]
-            var b = bg[i]
-            val flags = fl[i]
-            if (flags and REVERSE != 0) {
-                val t = f; f = b; b = t
+        val total = cols * rows
+
+        if (viewportOffset <= 0) {
+            // Fast path: copy screen directly.
+            System.arraycopy(cp, 0, oc, 0, total)
+            System.arraycopy(fg, 0, of, 0, total)
+            System.arraycopy(bg, 0, ob, 0, total)
+            System.arraycopy(fl, 0, os, 0, total)
+        } else {
+            // Compose from scrollback (top) + screen (bottom).
+            val scrollbackRows = minOf(viewportOffset, rows)
+            val screenRows = rows - scrollbackRows
+
+            for (r in 0 until scrollbackRows) {
+                val linesBack = viewportOffset - r
+                if (linesBack <= scrollback.storedLines) {
+                    scrollback.copyLineInto(linesBack, oc, of, ob, os, r * cols, cols)
+                } else {
+                    blankSnapshotRow(oc, of, ob, os, r * cols)
+                }
             }
-            if (i == cursorIdx) {
-                // Block cursor: glyph in the cell background colour on a
-                // cursor-coloured block.
-                f = bg[i]
-                b = TerminalColors.CURSOR
+            if (screenRows > 0) {
+                val dstOff = scrollbackRows * cols
+                System.arraycopy(cp, 0, oc, dstOff, screenRows * cols)
+                System.arraycopy(fg, 0, of, dstOff, screenRows * cols)
+                System.arraycopy(bg, 0, ob, dstOff, screenRows * cols)
+                System.arraycopy(fl, 0, os, dstOff, screenRows * cols)
             }
-            oc[i] = cp[i]
-            of[i] = f
-            ob[i] = b
-            os[i] = flags
+        }
+
+        // Apply reverse-video and cursor.
+        val cursorIdx = if (cursorVisible && viewportOffset == 0) idx(cursorRow, cursorCol) else -1
+        for (i in 0 until total) {
+            var f = of[i]; var b = ob[i]
+            if (os[i] and REVERSE != 0) { val t = f; f = b; b = t }
+            if (i == cursorIdx) { f = ob[i]; b = TerminalColors.CURSOR }
+            of[i] = f; ob[i] = b
+        }
+    }
+
+    private fun blankSnapshotRow(
+        oc: IntArray, of: IntArray, ob: IntArray, os: IntArray, offset: Int,
+    ) {
+        for (c in 0 until cols) {
+            oc[offset + c] = ' '.code
+            of[offset + c] = TerminalColors.DEFAULT_FG
+            ob[offset + c] = TerminalColors.DEFAULT_BG
+            os[offset + c] = 0
         }
     }
 
     companion object {
         const val TAB_WIDTH = 8
+        const val DEFAULT_SCROLLBACK = 10_000
 
         const val BOLD = 1
         const val DIM = 2

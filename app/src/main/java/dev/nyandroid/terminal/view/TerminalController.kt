@@ -72,6 +72,10 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
         backend.write(bytes)
     }
 
+    fun scrollViewport(lines: Int) {
+        emulator.scrollViewport(lines)
+    }
+
     fun destroy() {
         backend.close()
         renderThread.quit()

@@ -19,6 +19,9 @@ class TerminalEmulator(
 
     private var revision = 0L
 
+    /** Lines scrolled back from the live screen. 0 = at bottom (live). */
+    private var viewportOffset = 0
+
     /** Invoked (on the feeding thread) whenever the screen changed. */
     var onChange: (() -> Unit)? = null
 
@@ -28,6 +31,7 @@ class TerminalEmulator(
     fun feed(data: ByteArray, length: Int) {
         synchronized(lock) {
             parser.parse(data, length)
+            viewportOffset = 0 // Auto-scroll to bottom on new output.
             revision++
         }
         onChange?.invoke()
@@ -36,6 +40,7 @@ class TerminalEmulator(
     fun resize(cols: Int, rows: Int) {
         synchronized(lock) {
             grid.resize(cols, rows)
+            viewportOffset = 0
             revision++
         }
         onChange?.invoke()
@@ -46,8 +51,24 @@ class TerminalEmulator(
      * The renderer can compare revisions to skip redundant redraws.
      */
     fun snapshot(out: FrameSnapshot): Long = synchronized(lock) {
-        grid.snapshotInto(out)
+        grid.snapshotInto(out, viewportOffset)
         out.markUpdated(revision)
         revision
     }
+
+    /**
+     * Scrolls the viewport by [delta] lines (positive = back into history,
+     * negative = toward live screen). Called from the UI thread.
+     */
+    fun scrollViewport(delta: Int) {
+        synchronized(lock) {
+            val maxOffset = grid.scrollback.storedLines
+            viewportOffset = (viewportOffset + delta).coerceIn(0, maxOffset)
+            revision++
+        }
+        onChange?.invoke()
+    }
+
+    /** Whether currently on the alternate screen (UI may disable scrollback). */
+    fun isAltScreen(): Boolean = synchronized(lock) { grid.onAltScreen }
 }
