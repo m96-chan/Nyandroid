@@ -490,10 +490,15 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 3 -> penFlags = penFlags or ITALIC
                 4 -> penFlags = penFlags or UNDERLINE
                 7 -> penFlags = penFlags or REVERSE
+                9 -> penFlags = penFlags or STRIKETHROUGH
+                21 -> penFlags = penFlags or DOUBLE_UNDERLINE
                 22 -> penFlags = penFlags and (BOLD or DIM).inv()
                 23 -> penFlags = penFlags and ITALIC.inv()
-                24 -> penFlags = penFlags and UNDERLINE.inv()
+                24 -> penFlags = penFlags and (UNDERLINE or DOUBLE_UNDERLINE or CURLY_UNDERLINE).inv()
                 27 -> penFlags = penFlags and REVERSE.inv()
+                29 -> penFlags = penFlags and STRIKETHROUGH.inv()
+                53 -> penFlags = penFlags or OVERLINE
+                55 -> penFlags = penFlags and OVERLINE.inv()
                 in 30..37 -> penFg = TerminalColors.indexed(p - 30)
                 in 90..97 -> penFg = TerminalColors.indexed(p - 90 + 8)
                 39 -> penFg = TerminalColors.DEFAULT_FG
@@ -825,6 +830,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         const val REVERSE = 16
 
         const val WIDE = 32
+        const val STRIKETHROUGH = 64
+        const val OVERLINE = 128
+        const val DOUBLE_UNDERLINE = 256
+        const val CURLY_UNDERLINE = 512
         /** Sentinel codepoint for the right-half cell of a wide character. */
         const val WIDE_DUMMY = 0
 
