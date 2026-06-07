@@ -11,7 +11,11 @@ import java.io.File
  * Supports key-value pairs, comments (#), and a subset of kitty settings:
  * fonts, cursor, scrollback, colors, and bell.
  */
-class KittyConfig private constructor(private val entries: Map<String, String>) {
+class KittyConfig private constructor(
+    private val entries: Map<String, String>,
+    /** Key bindings parsed from `map` directives. */
+    val keyBindings: List<KeyBinding> = emptyList(),
+) {
 
     // --- Font ----------------------------------------------------------------
     val fontFamily: String get() = get("font_family", "JetBrains Mono Nerd Font")
@@ -63,7 +67,7 @@ class KittyConfig private constructor(private val entries: Map<String, String>) 
         /** Load config from app's files directory, or return defaults. */
         fun load(context: Context): KittyConfig {
             val file = File(context.filesDir, CONFIG_FILENAME)
-            return if (file.exists()) parse(file.readText()) else KittyConfig(emptyMap())
+            return if (file.exists()) parse(file.readText()) else KittyConfig(emptyMap(), defaultKeyBindings())
         }
 
         /** Parse a kitty.conf string into a KittyConfig. */
@@ -74,19 +78,33 @@ class KittyConfig private constructor(private val entries: Map<String, String>) 
                 if (trimmed.isEmpty() || trimmed.startsWith('#')) continue
                 // Handle 'include' directive (not recursive for now).
                 if (trimmed.startsWith("include ")) continue
-                // Handle 'map' directive.
+                // map directives are handled separately.
                 if (trimmed.startsWith("map ")) continue
                 val parts = trimmed.split(Regex("\\s+"), limit = 2)
                 if (parts.size == 2) {
                     entries[parts[0]] = parts[1]
                 }
             }
-            return KittyConfig(entries)
+            val bindings = KeyBinding.parseAll(text).ifEmpty { defaultKeyBindings() }
+            return KittyConfig(entries, bindings)
         }
 
         /** Apply the config's color scheme to the global palette. */
         fun applyColors(config: KittyConfig) {
             TerminalColors.applyScheme(config.colorScheme())
         }
+
+        /** Default key bindings matching kitty defaults. */
+        private fun defaultKeyBindings(): List<KeyBinding> = KeyBinding.parseAll("""
+            map ctrl+shift+c copy_to_clipboard
+            map ctrl+shift+v paste_from_clipboard
+            map ctrl+shift+t new_tab
+            map ctrl+shift+w close_tab
+            map ctrl+shift+right next_tab
+            map ctrl+shift+left previous_tab
+            map ctrl+shift+equal change_font_size all +1.0
+            map ctrl+shift+minus change_font_size all -1.0
+            map ctrl+shift+0 change_font_size all 0
+        """.trimIndent())
     }
 }

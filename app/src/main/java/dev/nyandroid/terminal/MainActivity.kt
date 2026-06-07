@@ -41,6 +41,8 @@ class MainActivity : AppCompatActivity() {
         terminalView = TerminalView(this)
         extraKeysBar = ExtraKeysBar(this, terminalView)
         terminalView.extraKeysBar = extraKeysBar
+        terminalView.keyBindings = config.keyBindings
+        terminalView.onKeyBindingAction = { action, args -> handleKeyAction(action, args) }
         tabBar = TabBar(this, tabManager)
 
         // Create initial tab and set controller BEFORE setContentView, because
@@ -102,6 +104,47 @@ class MainActivity : AppCompatActivity() {
     private fun switchToActiveTab() {
         val tab = tabManager.activeTab ?: return
         terminalView.setController(tab.controller)
+    }
+
+    private fun handleKeyAction(action: String, args: String): Boolean = when (action) {
+        "copy_to_clipboard" -> {
+            terminalView.performCopy(); true
+        }
+        "paste_from_clipboard" -> {
+            terminalView.performPaste(); true
+        }
+        "new_tab" -> {
+            createNewTab(); true
+        }
+        "close_tab" -> {
+            if (tabManager.tabCount > 1) {
+                tabManager.closeTab(tabManager.activeIndex)
+            }
+            true
+        }
+        "next_tab" -> {
+            val next = (tabManager.activeIndex + 1) % tabManager.tabCount
+            tabManager.switchTo(next)
+            switchToActiveTab()
+            true
+        }
+        "previous_tab" -> {
+            val prev = (tabManager.activeIndex - 1 + tabManager.tabCount) % tabManager.tabCount
+            tabManager.switchTo(prev)
+            switchToActiveTab()
+            true
+        }
+        "change_font_size" -> {
+            // TODO: runtime font size change requires renderer rebuild
+            true
+        }
+        "scroll_line_up" -> {
+            terminalView.controller.scrollViewport(-1); true
+        }
+        "scroll_line_down" -> {
+            terminalView.controller.scrollViewport(1); true
+        }
+        else -> false
     }
 
     override fun onDestroy() {

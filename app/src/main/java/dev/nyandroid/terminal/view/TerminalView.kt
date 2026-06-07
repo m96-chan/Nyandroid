@@ -21,6 +21,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.OverScroller
+import dev.nyandroid.terminal.config.KeyBinding
 import dev.nyandroid.terminal.emulator.SelectionRange
 import dev.nyandroid.terminal.emulator.TerminalGrid
 import dev.nyandroid.terminal.input.KeyEncoder
@@ -131,7 +132,22 @@ class TerminalView @JvmOverloads constructor(
     internal var virtualAlt = false
     internal var virtualFn = false
 
+    /** Key bindings from config. */
+    internal var keyBindings: List<KeyBinding> = emptyList()
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        // Check key bindings first.
+        for (binding in keyBindings) {
+            if (binding.matches(event, virtualCtrl, virtualAlt)) {
+                if (onKeyBindingAction?.invoke(binding.action, binding.args) == true) {
+                    virtualCtrl = false
+                    virtualAlt = false
+                    virtualFn = false
+                    extraKeysBar?.syncToggleState()
+                    return true
+                }
+            }
+        }
         val bytes = KeyEncoder.encode(
             event,
             applicationCursorKeys = controller.isApplicationCursorKeys(),
@@ -155,6 +171,12 @@ class TerminalView @JvmOverloads constructor(
     }
 
     internal var extraKeysBar: ExtraKeysBar? = null
+
+    /**
+     * Callback for key binding actions. Returns true if the action was handled.
+     * Set by the activity to route actions like copy, paste, new_tab, etc.
+     */
+    var onKeyBindingAction: ((action: String, args: String) -> Boolean)? = null
 
     // --- Touch (scroll + selection + mouse reporting) -----------------------
 
@@ -348,6 +370,11 @@ class TerminalView @JvmOverloads constructor(
         val text = cm.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString() ?: return
         controller.paste(text)
     }
+
+    // --- Public copy/paste API -----------------------------------------------
+
+    fun performCopy() = copySelection()
+    fun performPaste() = pasteFromClipboard()
 
     // --- Public API ---------------------------------------------------------
 
