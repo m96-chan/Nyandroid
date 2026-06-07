@@ -95,6 +95,45 @@ class ScrollbackBuffer(val maxLines: Int, internal var cols: Int) {
     }
 
     /**
+     * Searches for [query] in the scrollback, returning the line offset
+     * (linesBack) of the first match at or after [startLinesBack].
+     * Returns -1 if not found.
+     */
+    fun search(query: String, startLinesBack: Int = 1, forward: Boolean = false): Int {
+        val count = storedLines
+        if (count == 0 || query.isEmpty()) return -1
+        val lowerQuery = query.lowercase()
+
+        if (forward) {
+            // Search from startLinesBack toward more recent lines.
+            var lb = startLinesBack
+            while (lb >= 1) {
+                if (lineContains(lb, lowerQuery)) return lb
+                lb--
+            }
+        } else {
+            // Search from startLinesBack toward older lines.
+            var lb = startLinesBack
+            while (lb <= count) {
+                if (lineContains(lb, lowerQuery)) return lb
+                lb++
+            }
+        }
+        return -1
+    }
+
+    private fun lineContains(linesBack: Int, lowerQuery: String): Boolean {
+        val ringIdx = (head - linesBack).mod(maxLines)
+        val src = ringIdx * cols
+        val sb = StringBuilder(cols)
+        for (c in 0 until cols) {
+            val cp = cpBuf[src + c]
+            if (cp > 0) sb.appendCodePoint(cp)
+        }
+        return sb.toString().lowercase().contains(lowerQuery)
+    }
+
+    /**
      * Returns a new buffer with [newCols] width, copying all stored lines
      * (truncating or padding as needed).
      */

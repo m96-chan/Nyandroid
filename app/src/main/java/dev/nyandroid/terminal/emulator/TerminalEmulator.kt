@@ -120,4 +120,22 @@ class TerminalEmulator(
     fun mouseSgrFormat(): Boolean = synchronized(lock) { grid.mouseSgrFormat }
 
     fun currentViewportOffset(): Int = synchronized(lock) { viewportOffset }
+
+    /**
+     * Searches scrollback for [query], scrolling to the match if found.
+     * Returns true if a match was found.
+     */
+    fun searchScrollback(query: String, forward: Boolean = false): Boolean = synchronized(lock) {
+        val startOffset = if (forward) {
+            (viewportOffset - 1).coerceAtLeast(1)
+        } else {
+            viewportOffset + 1
+        }
+        val result = grid.scrollback.search(query, startOffset, forward)
+        if (result > 0) {
+            viewportOffset = result
+            revision++
+            true
+        } else false
+    }.also { if (it) onChange?.invoke() }
 }
