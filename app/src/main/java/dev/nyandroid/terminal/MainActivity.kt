@@ -1,5 +1,6 @@
 package dev.nyandroid.terminal
 
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
@@ -100,7 +101,8 @@ class MainActivity : AppCompatActivity() {
             view.setPadding(
                 systemBars.left, systemBars.top, systemBars.right, bottomInset,
             )
-            extraKeysBar.visibility = if (imeInsets.bottom > 0) View.VISIBLE else View.GONE
+            val hasHardwareKeyboard = resources.configuration.keyboard == Configuration.KEYBOARD_QWERTY
+            extraKeysBar.visibility = if (imeInsets.bottom > 0 || hasHardwareKeyboard) View.VISIBLE else View.GONE
             WindowInsetsCompat.CONSUMED
         }
 
