@@ -25,6 +25,7 @@ class RenderThread(
     private val frame = FrameSnapshot()
     private val renderPending = AtomicBoolean(false)
     private var surfaceReady = false
+    private var lastRenderedRevision = -1L
 
     fun start() {
         thread.start()
@@ -70,6 +71,9 @@ class RenderThread(
                 renderPending.set(false)
                 if (!surfaceReady) return@post
                 frameSource(frame)
+                // Skip rendering if frame hasn't changed (unless cursor blinks).
+                if (frame.revision == lastRenderedRevision) return@post
+                lastRenderedRevision = frame.revision
                 gpu.renderFrame(frame)
                 // Schedule next blink redraw if cursor blinks.
                 scheduleBlink()
