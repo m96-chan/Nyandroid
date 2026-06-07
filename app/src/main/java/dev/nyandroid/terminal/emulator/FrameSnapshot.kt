@@ -32,6 +32,13 @@ class FrameSnapshot {
     var revision: Long = 0
         private set
 
+    /** Cursor row in the snapshot (-1 if invisible). */
+    var cursorRow: Int = -1
+    /** Cursor column in the snapshot (-1 if invisible). */
+    var cursorCol: Int = -1
+    /** DECSCUSR cursor shape (0-6). */
+    var cursorShape: Int = 0
+
     fun ensureCapacity(cols: Int, rows: Int) {
         if (this.cols == cols && this.rows == rows) return
         this.cols = cols

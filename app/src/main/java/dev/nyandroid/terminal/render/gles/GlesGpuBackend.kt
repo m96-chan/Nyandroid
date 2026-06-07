@@ -162,9 +162,88 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
 
         GLES30.glBindVertexArray(vao)
         GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLE_STRIP, 0, 4, cellCount)
+
+        // Draw beam/underline cursor as an additional instance.
+        drawNonBlockCursor(frame, program)
+
         GLES30.glBindVertexArray(0)
 
         egl.swapBuffers()
+    }
+
+    /**
+     * Draws beam (|) or underline (_) cursor as a colored rectangle overlay.
+     * Block cursors are baked into the snapshot; this handles shapes 3-6.
+     */
+    private fun drawNonBlockCursor(frame: FrameSnapshot, program: ShaderProgram) {
+        if (frame.cursorRow < 0 || frame.cursorCol < 0) return
+        val shape = frame.cursorShape
+        val isBlock = shape <= TerminalGrid.CURSOR_BLOCK_STEADY
+        if (isBlock) return // Already baked in snapshot.
+
+        // Blink: odd shapes blink, even shapes are steady.
+        val blinks = shape % 2 == 1
+        if (blinks) {
+            val phase = (System.currentTimeMillis() / CURSOR_BLINK_MS) % 2
+            if (phase == 1L) return // Hidden phase.
+        }
+
+        val cellW = metrics.width.toFloat()
+        val cellH = metrics.height.toFloat()
+        val col = frame.cursorCol.toFloat()
+        val row = frame.cursorRow.toFloat()
+
+        // Cursor color.
+        val cr = ((TerminalColors.CURSOR shr 16) and 0xFF) / 255f
+        val cg = ((TerminalColors.CURSOR shr 8) and 0xFF) / 255f
+        val cb = (TerminalColors.CURSOR and 0xFF) / 255f
+
+        // Use a blank glyph sprite (space) to draw a solid rect.
+        val blankSprite = atlas.spriteFor(' '.code, bold = false, italic = false)
+
+        // Compute fractional position for thin cursors.
+        val isBeam = shape >= CURSOR_BEAM_BLINK
+        val cursorData: FloatArray
+        if (isBeam) {
+            // Beam: 2px wide bar at left edge of cell.
+            val beamWidth = 2f / cellW // Fraction of cell width.
+            cursorData = floatArrayOf(
+                col, row,
+                blankSprite.u0, blankSprite.v0, blankSprite.u1, blankSprite.v1,
+                cr, cg, cb,
+                cr, cg, cb, // bg = cursor color (solid)
+            )
+        } else {
+            // Underline: 2px tall bar at bottom of cell.
+            cursorData = floatArrayOf(
+                col, row,
+                blankSprite.u0, blankSprite.v0, blankSprite.u1, blankSprite.v1,
+                cr, cg, cb,
+                cr, cg, cb,
+            )
+        }
+
+        // For simplicity, draw beam/underline using scissor test to clip the
+        // full-cell instance to just the cursor region.
+        GLES30.glEnable(GLES30.GL_SCISSOR_TEST)
+        if (isBeam) {
+            val px = (col * cellW).toInt()
+            val py = viewportH - ((row + 1) * cellH).toInt()
+            GLES30.glScissor(px, py, 2, cellH.toInt())
+        } else {
+            val px = (col * cellW).toInt()
+            val py = viewportH - ((row + 1) * cellH).toInt()
+            GLES30.glScissor(px, py, cellW.toInt(), 2)
+        }
+
+        ensureInstanceCapacity(1)
+        instanceBuffer.clear()
+        instanceBuffer.put(cursorData)
+        instanceBuffer.flip()
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, instanceVbo)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, cursorData.size * 4, instanceBuffer, GLES30.GL_DYNAMIC_DRAW)
+        GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLE_STRIP, 0, 4, 1)
+        GLES30.glDisable(GLES30.GL_SCISSOR_TEST)
     }
 
     private fun ensureInstanceCapacity(cellCount: Int) {
@@ -190,6 +269,8 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
 
     private companion object {
         const val FLOATS_PER_INSTANCE = 12
+        const val CURSOR_BLINK_MS = 530L
+        const val CURSOR_BEAM_BLINK = 5
 
         val VERTEX_SRC = """
             #version 300 es

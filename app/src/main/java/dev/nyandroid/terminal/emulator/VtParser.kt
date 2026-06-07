@@ -26,6 +26,7 @@ class VtParser(
     private var paramCount = 0
     private var currentParam = -1
     private var privateMarker = false
+    private var intermediateChar = 0
 
     // Incremental UTF-8 decoding.
     private var utf8Remaining = 0
@@ -106,6 +107,7 @@ class VtParser(
         paramCount = 0
         currentParam = -1
         privateMarker = false
+        intermediateChar = 0
         params.fill(0)
     }
 
@@ -118,7 +120,7 @@ class VtParser(
                 currentParam = currentParam * 10 + (b - '0'.code)
             }
             b == ';'.code -> pushParam()
-            b in 0x20..0x2F -> { /* intermediate bytes: ignored */ }
+            b in 0x20..0x2F -> intermediateChar = b
             b in 0x40..0x7E -> {
                 pushParam()
                 dispatchCsi(b.toChar())
@@ -168,6 +170,7 @@ class VtParser(
             's' -> grid.saveCursor()
             'u' -> grid.restoreCursor()
             'n' -> deviceStatusReport(param(0, 0))
+            'q' -> if (intermediateChar == ' '.code) grid.setCursorShape(param(0, 0))
             else -> { /* unsupported: ignore */ }
         }
     }

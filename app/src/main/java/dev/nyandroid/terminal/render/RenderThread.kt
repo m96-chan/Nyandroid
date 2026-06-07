@@ -71,8 +71,25 @@ class RenderThread(
                 if (!surfaceReady) return@post
                 frameSource(frame)
                 gpu.renderFrame(frame)
+                // Schedule next blink redraw if cursor blinks.
+                scheduleBlink()
             }
         }
+    }
+
+    private var blinkScheduled = false
+
+    private fun scheduleBlink() {
+        if (blinkScheduled) return
+        blinkScheduled = true
+        handler.postDelayed({
+            blinkScheduled = false
+            if (surfaceReady) {
+                frameSource(frame)
+                gpu.renderFrame(frame)
+                scheduleBlink()
+            }
+        }, CURSOR_BLINK_MS)
     }
 
     fun quit() {
@@ -85,5 +102,6 @@ class RenderThread(
 
     private companion object {
         const val TAG = "RenderThread"
+        const val CURSOR_BLINK_MS = 530L
     }
 }

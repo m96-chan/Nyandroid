@@ -84,6 +84,9 @@ class TerminalEmulator(
     /** Whether currently on the alternate screen (UI may disable scrollback). */
     fun isAltScreen(): Boolean = synchronized(lock) { grid.onAltScreen }
 
+    /** Whether the cursor blinks (odd DECSCUSR values). */
+    fun cursorBlinks(): Boolean = synchronized(lock) { grid.cursorShape % 2 == 1 || grid.cursorShape == 0 }
+
     // --- Selection -----------------------------------------------------------
 
     fun setSelection(range: SelectionRange) {

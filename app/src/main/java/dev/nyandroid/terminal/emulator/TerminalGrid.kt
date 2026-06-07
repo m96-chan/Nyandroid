@@ -36,6 +36,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         private set
     var cursorVisible = true
         private set
+    /** DECSCUSR cursor shape: 0/1=blinking block, 2=steady block,
+     *  3=blinking underline, 4=steady underline, 5=blinking beam, 6=steady beam. */
+    var cursorShape = CURSOR_BLOCK_BLINK
+        private set
 
     private var penFg = TerminalColors.DEFAULT_FG
     private var penBg = TerminalColors.DEFAULT_BG
@@ -169,6 +173,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
 
     fun setCursorVisible(visible: Boolean) {
         cursorVisible = visible
+    }
+
+    fun setCursorShape(shape: Int) {
+        cursorShape = shape.coerceIn(0, 6)
     }
 
     // --- Scrolling ----------------------------------------------------------
@@ -428,6 +436,7 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         scrollTop = 0
         scrollBottom = rows - 1
         cursorVisible = true
+        cursorShape = CURSOR_BLOCK_BLINK
         wrapPending = false
         onAltScreen = false
         bracketedPasteMode = false
@@ -519,13 +528,28 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             }
         }
 
-        // Apply reverse-video and cursor.
-        val cursorIdx = if (cursorVisible && viewportOffset == 0) idx(cursorRow, cursorCol) else -1
+        // Apply reverse-video.
         for (i in 0 until total) {
-            var f = of[i]; var b = ob[i]
-            if (os[i] and REVERSE != 0) { val t = f; f = b; b = t }
-            if (i == cursorIdx) { f = ob[i]; b = TerminalColors.CURSOR }
-            of[i] = f; ob[i] = b
+            if (os[i] and REVERSE != 0) {
+                val t = of[i]; of[i] = ob[i]; ob[i] = t
+            }
+        }
+
+        // Apply cursor.
+        if (cursorVisible && viewportOffset == 0) {
+            out.cursorRow = cursorRow
+            out.cursorCol = cursorCol
+            out.cursorShape = cursorShape
+            val isBlock = cursorShape <= CURSOR_BLOCK_STEADY
+            if (isBlock) {
+                val i = idx(cursorRow, cursorCol)
+                of[i] = ob[i]
+                ob[i] = TerminalColors.CURSOR
+            }
+            // Beam and underline cursors are drawn by the GPU backend.
+        } else {
+            out.cursorRow = -1
+            out.cursorCol = -1
         }
     }
 
@@ -634,5 +658,13 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
 
         const val SELECTION_FG = 0xFFFFFF
         const val SELECTION_BG = 0x264F78
+
+        // DECSCUSR cursor shapes.
+        const val CURSOR_BLOCK_BLINK = 0
+        const val CURSOR_BLOCK_STEADY = 2
+        const val CURSOR_UNDERLINE_BLINK = 3
+        const val CURSOR_UNDERLINE_STEADY = 4
+        const val CURSOR_BEAM_BLINK = 5
+        const val CURSOR_BEAM_STEADY = 6
     }
 }
