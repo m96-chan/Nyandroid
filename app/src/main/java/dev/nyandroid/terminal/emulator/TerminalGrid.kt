@@ -93,6 +93,77 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     var outputStartRow = -1
         private set
 
+    // Kitty graphics protocol images.
+    data class GraphicsPlacement(
+        val id: Int,
+        val row: Int,
+        val col: Int,
+        val width: Int,
+        val height: Int,
+        val data: ByteArray,
+    )
+
+    val graphicsPlacements = mutableListOf<GraphicsPlacement>()
+    private var nextGraphicsId = 1
+    private val graphicsDataAccumulator = StringBuilder()
+    private var graphicsAccumId = 0
+    private var graphicsAccumMore = false
+
+    fun handleGraphicsCommand(payload: String) {
+        // Format: key=value,...;base64data
+        val semiIdx = payload.indexOf(';')
+        val controlPart = if (semiIdx >= 0) payload.substring(0, semiIdx) else payload
+        val dataPart = if (semiIdx >= 0) payload.substring(semiIdx + 1) else ""
+
+        val params = mutableMapOf<Char, String>()
+        for (kv in controlPart.split(',')) {
+            if (kv.length >= 2 && kv[1] == '=') {
+                params[kv[0]] = kv.substring(2)
+            }
+        }
+
+        val action = params['a'] ?: "t" // default: transmit
+        val more = params['m'] == "1"
+
+        when (action) {
+            "t", "T" -> {
+                // Transmit (and optionally display).
+                if (graphicsAccumMore) {
+                    graphicsDataAccumulator.append(dataPart)
+                } else {
+                    graphicsDataAccumulator.setLength(0)
+                    graphicsDataAccumulator.append(dataPart)
+                    graphicsAccumId = nextGraphicsId++
+                }
+                graphicsAccumMore = more
+                if (!more) {
+                    // Complete image received.
+                    val decoded = try {
+                        android.util.Base64.decode(
+                            graphicsDataAccumulator.toString(),
+                            android.util.Base64.DEFAULT,
+                        )
+                    } catch (_: Exception) { byteArrayOf() }
+                    if (decoded.isNotEmpty()) {
+                        val cols = params['c']?.toIntOrNull() ?: 1
+                        val rows = params['r']?.toIntOrNull() ?: 1
+                        graphicsPlacements.add(
+                            GraphicsPlacement(
+                                graphicsAccumId, cursorRow, cursorCol,
+                                cols, rows, decoded,
+                            ),
+                        )
+                    }
+                    graphicsDataAccumulator.setLength(0)
+                }
+            }
+            "d" -> {
+                // Delete placements.
+                graphicsPlacements.clear()
+            }
+        }
+    }
+
     fun shellMarkPromptStart() { promptStartRow = cursorRow }
     fun shellMarkCommandStart() { /* command begins at cursor */ }
     fun shellMarkOutputStart() { outputStartRow = cursorRow }

@@ -18,7 +18,7 @@ class VtParser(
     private val grid: TerminalGrid,
     private val respond: (ByteArray) -> Unit,
 ) {
-    private enum class State { GROUND, ESCAPE, CSI, OSC, OSC_ESC, CHARSET }
+    private enum class State { GROUND, ESCAPE, CSI, OSC, OSC_ESC, CHARSET, APC, APC_ESC }
 
     private var state = State.GROUND
 
@@ -30,6 +30,8 @@ class VtParser(
 
     // OSC string buffer.
     private val oscBuffer = StringBuilder()
+    // APC string buffer (kitty graphics protocol).
+    private val apcBuffer = StringBuilder()
 
     // Incremental UTF-8 decoding.
     private var utf8Remaining = 0
@@ -46,6 +48,8 @@ class VtParser(
                 State.OSC -> osc(b)
                 State.OSC_ESC -> oscEsc(b)
                 State.CHARSET -> { state = State.GROUND } // consume the designator byte
+                State.APC -> apc(b)
+                State.APC_ESC -> apcEsc(b)
             }
             i++
         }
@@ -98,6 +102,7 @@ class VtParser(
             '7' -> { grid.saveCursor(); state = State.GROUND }
             '8' -> { grid.restoreCursor(); state = State.GROUND }
             'c' -> { grid.fullReset(); state = State.GROUND }
+            '_' -> { apcBuffer.setLength(0); state = State.APC } // APC (kitty graphics)
             '=' -> { grid.setApplicationKeypad(true); state = State.GROUND }  // DECKPAM
             '>' -> { grid.setApplicationKeypad(false); state = State.GROUND } // DECKPNM
             '(', ')', '*', '+' -> state = State.CHARSET
@@ -312,6 +317,29 @@ class VtParser(
         return if (hex.length == 6) hex.toIntOrNull(16) else null
     }
 
+    // --- APC (kitty graphics protocol) ----------------------------------------
+
+    private fun apc(b: Int) {
+        when (b) {
+            ESC -> state = State.APC_ESC
+            else -> {
+                if (apcBuffer.length < MAX_APC_LEN) apcBuffer.append(b.toChar())
+            }
+        }
+    }
+
+    private fun apcEsc(b: Int) {
+        if (b == '\\'.code) dispatchApc()
+        state = State.GROUND
+    }
+
+    private fun dispatchApc() {
+        val s = apcBuffer.toString()
+        if (!s.startsWith("G")) return // Only kitty graphics APC
+        val payload = s.substring(1)
+        grid.handleGraphicsCommand(payload)
+    }
+
     companion object {
         private const val MAX_PARAMS = 16
         private const val REPLACEMENT = 0xFFFD
@@ -327,5 +355,6 @@ class VtParser(
         private const val SO = 0x0E
         private const val SI = 0x0F
         private const val MAX_OSC_LEN = 512
+        private const val MAX_APC_LEN = 4 * 1024 * 1024 // 4MB for image data
     }
 }
