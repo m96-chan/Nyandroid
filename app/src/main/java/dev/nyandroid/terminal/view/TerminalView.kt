@@ -3,6 +3,8 @@ package dev.nyandroid.terminal.view
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.ActionMode
 import android.view.GestureDetector
@@ -13,6 +15,7 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.ViewConfiguration
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -38,11 +41,12 @@ class TerminalView @JvmOverloads constructor(
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
     private val controller: TerminalController
+    private val handler = Handler(Looper.getMainLooper())
 
     private val gestureDetector: GestureDetector
     private val scroller = OverScroller(context)
     private var scrollAccumulator = 0f
-    private var lastScrollY = 0
+    private var lastFlingY = 0
 
     // Selection state.
     private var selecting = false
@@ -50,13 +54,20 @@ class TerminalView @JvmOverloads constructor(
     private var selectionAnchorCol = 0
     private var actionMode: ActionMode? = null
 
+    // Long-press detection (manual, because GestureDetector's longpress blocks scroll).
+    private var longPressDownX = 0f
+    private var longPressDownY = 0f
+    private var longPressDownTime = 0L
+    private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+
     init {
         val density = resources.displayMetrics.density
         val fontSpec = FontSpec.create(context, DEFAULT_FONT_SP * density)
         controller = TerminalController(context, fontSpec)
 
         gestureDetector = GestureDetector(context, TerminalGestureListener())
-        gestureDetector.setIsLongpressEnabled(true)
+        gestureDetector.setIsLongpressEnabled(false) // We handle long-press ourselves.
 
         holder.addCallback(this)
         isFocusable = true
@@ -95,8 +106,26 @@ class TerminalView @JvmOverloads constructor(
         return TerminalInputConnection(this)
     }
 
+    // Virtual modifier state from extra-keys toolbar.
+    internal var virtualCtrl = false
+    internal var virtualAlt = false
+    internal var virtualFn = false
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val bytes = KeyEncoder.encode(event)
+        val bytes = KeyEncoder.encode(
+            event,
+            applicationCursorKeys = controller.isApplicationCursorKeys(),
+            virtualCtrl = virtualCtrl,
+            virtualAlt = virtualAlt,
+            virtualFn = virtualFn,
+        )
+        // Clear sticky modifiers after use.
+        if (bytes != null) {
+            virtualCtrl = false
+            virtualAlt = false
+            virtualFn = false
+            extraKeysBar?.syncToggleState()
+        }
         return if (bytes != null) {
             controller.write(bytes)
             true
@@ -105,36 +134,67 @@ class TerminalView @JvmOverloads constructor(
         }
     }
 
+    internal var extraKeysBar: ExtraKeysBar? = null
+
     // --- Touch (scroll + selection) -----------------------------------------
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        gestureDetector.onTouchEvent(event)
-
         when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                longPressDownX = event.x
+                longPressDownY = event.y
+                longPressDownTime = event.eventTime
+                handler.removeCallbacks(longPressRunnable)
+                if (actionMode == null) {
+                    handler.postDelayed(longPressRunnable, longPressTimeout)
+                }
+                // Stop any ongoing fling.
+                scroller.forceFinished(true)
+            }
             MotionEvent.ACTION_MOVE -> {
                 if (selecting) {
                     val (row, col) = touchToCell(event.x, event.y)
                     updateSelection(row, col)
+                    return true
+                }
+                // Cancel long-press if finger moved too far.
+                val dx = event.x - longPressDownX
+                val dy = event.y - longPressDownY
+                if (dx * dx + dy * dy > touchSlop * touchSlop) {
+                    handler.removeCallbacks(longPressRunnable)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPressRunnable)
                 scrollAccumulator = 0f
                 if (selecting) {
                     selecting = false
-                    // Keep selection visible; ActionMode handles copy/dismiss.
                 }
             }
+        }
+
+        if (!selecting) {
+            gestureDetector.onTouchEvent(event)
         }
         return true
     }
 
-    override fun computeScroll() {
-        if (scroller.computeScrollOffset()) {
-            val currentY = scroller.currY
-            val dy = currentY - lastScrollY
-            lastScrollY = currentY
-            applyScrollDelta(dy.toFloat())
-            postInvalidateOnAnimation()
+    private val longPressRunnable = Runnable {
+        val (row, col) = touchToCell(longPressDownX, longPressDownY)
+        startSelection(row, col)
+    }
+
+    // --- Fling animation (driven by Handler, not View.computeScroll) --------
+
+    private val flingRunnable = object : Runnable {
+        override fun run() {
+            if (scroller.computeScrollOffset()) {
+                val currentY = scroller.currY
+                val dy = currentY - lastFlingY
+                lastFlingY = currentY
+                if (dy != 0) applyScrollDelta(dy.toFloat())
+                handler.postDelayed(this, 16) // ~60fps
+            }
         }
     }
 
@@ -175,9 +235,6 @@ class TerminalView @JvmOverloads constructor(
     }
 
     private fun selectWord(row: Int, col: Int) {
-        val text = controller.getSelectedText() // Not useful yet; read from grid.
-        // Select word boundaries: expand from (row, col) outward to non-word chars.
-        // For simplicity, select the whole line content at this row.
         val range = SelectionRange.normalized(
             row, 0, row, controller.cols - 1,
             controller.currentViewportOffset(),
@@ -216,11 +273,29 @@ class TerminalView @JvmOverloads constructor(
     // --- Public API ---------------------------------------------------------
 
     fun sendText(text: CharSequence) {
-        controller.write(KeyEncoder.encodeText(text))
+        var bytes = KeyEncoder.encodeText(text)
+        if (virtualAlt) bytes = byteArrayOf(0x1B) + bytes
+        controller.write(bytes)
+        virtualCtrl = false
+        virtualAlt = false
+        virtualFn = false
+        extraKeysBar?.syncToggleState()
     }
 
     fun sendKey(event: KeyEvent) {
-        KeyEncoder.encode(event)?.let { controller.write(it) }
+        KeyEncoder.encode(
+            event,
+            applicationCursorKeys = controller.isApplicationCursorKeys(),
+            virtualCtrl = virtualCtrl,
+            virtualAlt = virtualAlt,
+            virtualFn = virtualFn,
+        )?.let {
+            controller.write(it)
+            virtualCtrl = false
+            virtualAlt = false
+            virtualFn = false
+            extraKeysBar?.syncToggleState()
+        }
     }
 
     private fun showKeyboard() {
@@ -229,6 +304,7 @@ class TerminalView @JvmOverloads constructor(
     }
 
     fun shutdown() {
+        handler.removeCallbacksAndMessages(null)
         controller.destroy()
     }
 
@@ -255,15 +331,9 @@ class TerminalView @JvmOverloads constructor(
             return true
         }
 
-        override fun onLongPress(e: MotionEvent) {
-            val (row, col) = touchToCell(e.x, e.y)
-            startSelection(row, col)
-        }
-
         override fun onScroll(
             e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float,
         ): Boolean {
-            if (selecting) return false // Don't scroll while selecting.
             applyScrollDelta(distanceY)
             return true
         }
@@ -271,13 +341,13 @@ class TerminalView @JvmOverloads constructor(
         override fun onFling(
             e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float,
         ): Boolean {
-            if (selecting) return false
-            lastScrollY = 0
+            lastFlingY = 0
             scroller.fling(
                 0, 0, 0, (-velocityY).toInt(),
                 0, 0, Int.MIN_VALUE / 2, Int.MAX_VALUE / 2,
             )
-            postInvalidateOnAnimation()
+            handler.removeCallbacks(flingRunnable)
+            handler.post(flingRunnable)
             return true
         }
     }

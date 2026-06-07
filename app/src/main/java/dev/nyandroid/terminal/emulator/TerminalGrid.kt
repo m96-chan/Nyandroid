@@ -54,6 +54,14 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     var bracketedPasteMode = false
         private set
 
+    /** DECCKM (mode ?1): when true, cursor keys send SS3 A/B/C/D instead of CSI. */
+    var applicationCursorKeys = false
+        private set
+
+    /** DECKPAM/DECKPNM: when true, keypad sends application sequences. */
+    var applicationKeypad = false
+        private set
+
     // Saved cursor (DECSC / DECRC and CSI s/u).
     private var savedRow = 0
     private var savedCol = 0
@@ -473,6 +481,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         wrapPending = false
         onAltScreen = false
         bracketedPasteMode = false
+        applicationCursorKeys = false
+        applicationKeypad = false
         scrollback.clear()
     }
 
@@ -599,6 +609,14 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
 
     fun setBracketedPasteMode(enable: Boolean) {
         bracketedPasteMode = enable
+    }
+
+    fun setApplicationCursorKeys(enable: Boolean) {
+        applicationCursorKeys = enable
+    }
+
+    fun setApplicationKeypad(enable: Boolean) {
+        applicationKeypad = enable
     }
 
     // --- Selection -----------------------------------------------------------

@@ -95,6 +95,8 @@ class VtParser(
             '7' -> { grid.saveCursor(); state = State.GROUND }
             '8' -> { grid.restoreCursor(); state = State.GROUND }
             'c' -> { grid.fullReset(); state = State.GROUND }
+            '=' -> { grid.setApplicationKeypad(true); state = State.GROUND }  // DECKPAM
+            '>' -> { grid.setApplicationKeypad(false); state = State.GROUND } // DECKPNM
             '(', ')', '*', '+' -> state = State.CHARSET
             else -> state = State.GROUND
         }
@@ -178,6 +180,7 @@ class VtParser(
     private fun setMode(enable: Boolean) {
         if (!privateMarker) return
         when (param(0, 0)) {
+            1 -> grid.setApplicationCursorKeys(enable)  // DECCKM
             25 -> grid.setCursorVisible(enable)         // DECTCEM
             47, 1047, 1049 -> grid.setAltScreen(enable) // alternate screen
             2004 -> grid.setBracketedPasteMode(enable)  // bracketed paste

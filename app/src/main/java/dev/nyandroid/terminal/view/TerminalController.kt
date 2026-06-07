@@ -86,6 +86,9 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
     fun getSelectedText(): String? = emulator.getSelectedText()
     fun currentViewportOffset(): Int = emulator.currentViewportOffset()
 
+    fun isApplicationCursorKeys(): Boolean = emulator.isApplicationCursorKeys()
+    fun isApplicationKeypad(): Boolean = emulator.isApplicationKeypad()
+
     fun paste(text: String) {
         if (text.isEmpty()) return
         val bytes = if (emulator.isBracketedPasteMode()) {
