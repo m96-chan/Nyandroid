@@ -70,6 +70,42 @@ class GlyphRasterizer(
         return glyphWidth * metrics.height
     }
 
+    /**
+     * Rasterises a ligature (sequence of codepoints rendered as one glyph).
+     * The result spans [cellCount] cells wide.
+     */
+    fun rasterizeLigatureInto(
+        codePoints: IntArray, bold: Boolean, italic: Boolean,
+        out: java.nio.ByteBuffer, cellCount: Int,
+    ): Int {
+        val glyphWidth = metrics.width * cellCount
+        val bmp = ensureWideBitmap(glyphWidth)
+        bmp.eraseColor(Color.TRANSPARENT)
+        val c = Canvas(bmp)
+        val text = String(codePoints, 0, codePoints.size)
+        val paint = paintFor(bold, italic)
+        c.drawText(text, 0f, metrics.baseline.toFloat(), paint)
+        out.clear()
+        bmp.copyPixelsToBuffer(out)
+        out.flip()
+        return glyphWidth * metrics.height
+    }
+
+    /**
+     * Checks if a sequence of codepoints would form a ligature
+     * (rendered differently than individual glyphs).
+     */
+    fun hasLigature(codePoints: IntArray, bold: Boolean, italic: Boolean): Boolean {
+        val paint = paintFor(bold, italic)
+        val text = String(codePoints, 0, codePoints.size)
+        val totalWidth = paint.measureText(text)
+        var sumWidth = 0f
+        for (cp in codePoints) {
+            sumWidth += paint.measureText(String(Character.toChars(cp)))
+        }
+        return totalWidth < sumWidth * 0.95f
+    }
+
     private var wideBitmap: Bitmap? = null
 
     private fun ensureWideBitmap(width: Int): Bitmap {
