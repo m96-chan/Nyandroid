@@ -20,6 +20,9 @@ class GlyphRasterizer(
 ) {
     // Index by style bits: 0 plain, 1 bold, 2 italic, 3 bold-italic.
     private val paints = arrayOfNulls<Paint>(4)
+
+    // Fallback fonts for glyphs missing from the primary font.
+    private val fallbackPaints = arrayOfNulls<Paint>(4)
     private val reusableBitmap: Bitmap =
         Bitmap.createBitmap(metrics.width, metrics.height, Bitmap.Config.ALPHA_8)
     private val canvas = Canvas(reusableBitmap)
@@ -45,6 +48,33 @@ class GlyphRasterizer(
         }.also { paints[key] = it }
     }
 
+    private fun fallbackPaintFor(bold: Boolean, italic: Boolean): Paint {
+        val key = (if (bold) 1 else 0) or (if (italic) 2 else 0)
+        fallbackPaints[key]?.let { return it }
+        val style = when {
+            bold && italic -> android.graphics.Typeface.BOLD_ITALIC
+            bold -> android.graphics.Typeface.BOLD
+            italic -> android.graphics.Typeface.ITALIC
+            else -> android.graphics.Typeface.NORMAL
+        }
+        // Use system default sans-serif which has broad Unicode coverage.
+        val typeface = android.graphics.Typeface.create(
+            android.graphics.Typeface.DEFAULT, style,
+        )
+        return Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.typeface = typeface
+            textSize = spec.textSizePx
+            color = Color.WHITE
+        }.also { fallbackPaints[key] = it }
+    }
+
+    /** Returns the best paint for the given code point, falling back if needed. */
+    private fun bestPaintFor(codePoint: Int, bold: Boolean, italic: Boolean): Paint {
+        val primary = paintFor(bold, italic)
+        if (primary.hasGlyph(String(Character.toChars(codePoint)))) return primary
+        return fallbackPaintFor(bold, italic)
+    }
+
     /**
      * Rasterises [codePoint] into [out].
      *
@@ -63,7 +93,7 @@ class GlyphRasterizer(
         bmp.eraseColor(Color.TRANSPARENT)
         val c = if (glyphWidth == metrics.width) canvas else Canvas(bmp)
         val chars = Character.toChars(codePoint)
-        c.drawText(chars, 0, chars.size, 0f, metrics.baseline.toFloat(), paintFor(bold, italic))
+        c.drawText(chars, 0, chars.size, 0f, metrics.baseline.toFloat(), bestPaintFor(codePoint, bold, italic))
         out.clear()
         bmp.copyPixelsToBuffer(out)
         out.flip()
