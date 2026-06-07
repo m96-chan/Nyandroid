@@ -20,8 +20,13 @@ import android.widget.TextView
  */
 class ExtraKeysBar(
     context: Context,
-    private val terminalView: TerminalView,
+    private var terminalView: TerminalView,
 ) : HorizontalScrollView(context) {
+
+    /** Rebind to a different terminal view (e.g. on pane focus change). */
+    fun rebindTo(newView: TerminalView) {
+        terminalView = newView
+    }
 
     private val row = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL

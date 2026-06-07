@@ -105,6 +105,8 @@ class KittyConfig private constructor(
             map ctrl+shift+equal change_font_size all +1.0
             map ctrl+shift+minus change_font_size all -1.0
             map ctrl+shift+0 change_font_size all 0
+            map ctrl+shift+enter split_horizontal
+            map ctrl+shift+d split_vertical
         """.trimIndent())
     }
 }

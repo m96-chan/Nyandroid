@@ -4,8 +4,8 @@ import android.content.Context
 import dev.nyandroid.terminal.font.FontSpec
 
 /**
- * Manages multiple terminal sessions (tabs). Each tab has its own
- * [TerminalController] with independent backend + emulator + renderer.
+ * Manages multiple terminal sessions (tabs). Each tab has a [SplitContainer]
+ * that can hold one or more terminal panes.
  */
 class TabManager(
     private val context: Context,
@@ -14,9 +14,13 @@ class TabManager(
 ) {
     data class Tab(
         val id: Int,
-        val controller: TerminalController,
+        val splitContainer: SplitContainer,
         var title: String = "Terminal",
-    )
+    ) {
+        /** The first (or only) controller, for backwards compatibility. */
+        val controller: TerminalController
+            get() = splitContainer.allControllers().first()
+    }
 
     private val tabs = mutableListOf<Tab>()
     private var nextId = 0
@@ -32,8 +36,9 @@ class TabManager(
     fun getTabs(): List<Tab> = tabs.toList()
 
     fun createTab(): Tab {
-        val controller = TerminalController(context, fontSpec, scrollbackLines)
-        val tab = Tab(nextId++, controller, "Terminal ${tabs.size + 1}")
+        val split = SplitContainer(context, fontSpec, scrollbackLines)
+        split.initAsLeaf()
+        val tab = Tab(nextId++, split, "Terminal ${tabs.size + 1}")
         tabs.add(tab)
         activeIndex = tabs.size - 1
         onTabsChanged?.invoke()
@@ -50,7 +55,7 @@ class TabManager(
     fun closeTab(index: Int) {
         if (index !in tabs.indices || tabs.size <= 1) return
         val tab = tabs.removeAt(index)
-        tab.controller.destroy()
+        tab.splitContainer.destroyAll()
         if (activeIndex >= tabs.size) {
             activeIndex = tabs.size - 1
         } else if (activeIndex > index) {
@@ -60,7 +65,7 @@ class TabManager(
     }
 
     fun destroyAll() {
-        tabs.forEach { it.controller.destroy() }
+        tabs.forEach { it.splitContainer.destroyAll() }
         tabs.clear()
     }
 }
