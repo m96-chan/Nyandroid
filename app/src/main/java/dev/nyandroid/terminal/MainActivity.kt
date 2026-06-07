@@ -8,6 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import android.util.Log
 import dev.nyandroid.terminal.config.KittyConfig
 import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.view.ExtraKeysBar
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var extraKeysBar: ExtraKeysBar
     private lateinit var tabManager: TabManager
     private lateinit var tabBar: TabBar
+    private var currentFontSizePx = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -35,7 +37,8 @@ class MainActivity : AppCompatActivity() {
         KittyConfig.applyColors(config)
 
         val density = resources.displayMetrics.density
-        val fontSpec = FontSpec.create(this, config.fontSize * density)
+        currentFontSizePx = config.fontSize * density
+        val fontSpec = FontSpec.create(this, currentFontSizePx)
 
         tabManager = TabManager(this, fontSpec, config.scrollbackLines)
         terminalView = TerminalView(this)
@@ -43,6 +46,13 @@ class MainActivity : AppCompatActivity() {
         terminalView.extraKeysBar = extraKeysBar
         terminalView.keyBindings = config.keyBindings
         terminalView.onKeyBindingAction = { action, args -> handleKeyAction(action, args) }
+        terminalView.onFontSizeChanged = { newSizePx ->
+            val clamped = newSizePx.coerceIn(MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX)
+            if (clamped != currentFontSizePx) {
+                currentFontSizePx = clamped
+                rebuildWithFontSize(clamped, config.scrollbackLines)
+            }
+        }
         tabBar = TabBar(this, tabManager)
 
         // Create initial tab and set controller BEFORE setContentView, because
@@ -106,6 +116,19 @@ class MainActivity : AppCompatActivity() {
         terminalView.setController(tab.controller)
     }
 
+    private fun rebuildWithFontSize(sizePx: Float, scrollbackLines: Int) {
+        val newFontSpec = FontSpec.create(this, sizePx)
+        tabManager.destroyAll()
+        tabManager = TabManager(this, newFontSpec, scrollbackLines)
+        tabManager.onTabsChanged = {
+            tabBar.rebuild()
+            switchToActiveTab()
+        }
+        tabBar = TabBar(this, tabManager)
+        createNewTab()
+        Log.i("MainActivity", "Font size changed to ${sizePx}px")
+    }
+
     private fun handleKeyAction(action: String, args: String): Boolean = when (action) {
         "copy_to_clipboard" -> {
             terminalView.performCopy(); true
@@ -150,5 +173,10 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         tabManager.destroyAll()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val MIN_FONT_SIZE_PX = 16f
+        const val MAX_FONT_SIZE_PX = 80f
     }
 }

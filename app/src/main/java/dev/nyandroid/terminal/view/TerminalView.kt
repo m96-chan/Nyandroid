@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.view.ActionMode
 import android.view.GestureDetector
+import android.view.ScaleGestureDetector
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
@@ -47,9 +48,11 @@ class TerminalView @JvmOverloads constructor(
     private val handler = Handler(Looper.getMainLooper())
 
     private val gestureDetector: GestureDetector
+    private val scaleDetector: ScaleGestureDetector
     private val scroller = OverScroller(context)
     private var scrollAccumulator = 0f
     private var lastFlingY = 0
+    private var scaling = false
 
     // Selection state.
     private var selecting = false
@@ -64,9 +67,13 @@ class TerminalView @JvmOverloads constructor(
     private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
+    /** Callback for font size changes via pinch zoom. */
+    var onFontSizeChanged: ((Float) -> Unit)? = null
+
     init {
         gestureDetector = GestureDetector(context, TerminalGestureListener())
         gestureDetector.setIsLongpressEnabled(false) // We handle long-press ourselves.
+        scaleDetector = ScaleGestureDetector(context, PinchZoomListener())
 
         holder.addCallback(this)
         isFocusable = true
@@ -187,6 +194,10 @@ class TerminalView @JvmOverloads constructor(
         controller.mouseTrackingMode() != TerminalGrid.MOUSE_NONE
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Pinch zoom always gets a chance.
+        scaleDetector.onTouchEvent(event)
+        if (scaling) return true
+
         // If mouse tracking is active, route touch events as mouse reports.
         if (isMouseMode()) {
             return handleMouseEvent(event)
@@ -480,6 +491,28 @@ class TerminalView @JvmOverloads constructor(
     }
 
     override fun performClick(): Boolean = super.performClick()
+
+    // --- Pinch zoom ----------------------------------------------------------
+
+    private inner class PinchZoomListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        private var startFontSize = 0f
+
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+            scaling = true
+            startFontSize = controller.metrics.height.toFloat()
+            return true
+        }
+
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val newSize = startFontSize * detector.scaleFactor
+            onFontSizeChanged?.invoke(newSize)
+            return true
+        }
+
+        override fun onScaleEnd(detector: ScaleGestureDetector) {
+            scaling = false
+        }
+    }
 
     // --- ActionMode for copy/paste ------------------------------------------
 
