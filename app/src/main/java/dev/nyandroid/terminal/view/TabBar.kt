@@ -40,8 +40,14 @@ class TabBar(
 
         for ((index, tab) in tabs.withIndex()) {
             val isActive = index == tabManager.activeIndex
+            val stateIcon = when (tab.controller.connectionState) {
+                "connected" -> "\u25CF " // ● green-ish (rendered by text color)
+                "connecting" -> "\u25CB " // ○
+                "reconnecting" -> "\u21BB " // ↻
+                else -> "\u2716 " // ✖
+            }
             val tv = TextView(context).apply {
-                text = tab.title
+                text = "$stateIcon${tab.title}"
                 setTextColor(if (isActive) ACTIVE_FG else INACTIVE_FG)
                 setBackgroundColor(if (isActive) ACTIVE_BG else BAR_BG)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)

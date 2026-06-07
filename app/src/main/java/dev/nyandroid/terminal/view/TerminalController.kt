@@ -47,11 +47,22 @@ class TerminalController(
     var rows = DEFAULT_ROWS
         private set
 
+    /** Connection state: "connecting", "connected", "reconnecting", "disconnected". */
+    var connectionState = "connecting"
+        private set
+
+    /** Callback when connection state changes. */
+    var onConnectionStateChanged: ((String) -> Unit)? = null
+
     init {
         emulator.onChange = { renderThread.requestRender() }
         emulator.onBell = { performBell(context) }
         backend.onOutput = { buffer, length -> emulator.feed(buffer, length) }
         backend.onExit = { status -> Log.i(TAG, "Shell exited with status $status") }
+        backend.onStateChanged = { state ->
+            connectionState = state
+            onConnectionStateChanged?.invoke(state)
+        }
         renderThread.start()
     }
 
@@ -107,6 +118,7 @@ class TerminalController(
     fun setSelection(range: SelectionRange) = emulator.setSelection(range)
     fun clearSelection() = emulator.clearSelection()
     fun getSelectedText(): String? = emulator.getSelectedText()
+    fun getLineText(row: Int): String? = emulator.getLineText(row)
     fun currentViewportOffset(): Int = emulator.currentViewportOffset()
 
     fun isApplicationCursorKeys(): Boolean = emulator.isApplicationCursorKeys()

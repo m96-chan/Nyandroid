@@ -41,6 +41,7 @@ class MainActivity : AppCompatActivity() {
 
         config = KittyConfig.load(this)
         KittyConfig.applyColors(config)
+        TerminalService.start(this)
 
         val density = resources.displayMetrics.density
         currentFontSizePx = config.fontSize * density
@@ -123,6 +124,11 @@ class MainActivity : AppCompatActivity() {
 
         // Setup callbacks for all terminal views in this tab.
         split.setupCallbacks { tv -> setupTerminalView(tv) }
+
+        // Wire connection state changes to update the tab bar.
+        for (ctrl in split.allControllers()) {
+            ctrl.onConnectionStateChanged = { _ -> runOnUiThread { tabBar.rebuild() } }
+        }
 
         // Wire focus tracking.
         split.onPaneFocused = { tv, ctrl ->
@@ -219,6 +225,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         tabManager.destroyAll()
+        TerminalService.stop(this)
         super.onDestroy()
     }
 

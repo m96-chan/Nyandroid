@@ -23,6 +23,12 @@
     <!-- SSH backend connects to the Debian VM on the local avf_tap_fixed bridge. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Foreground service to keep SSH alive in background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -40,6 +46,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".TerminalService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false" />
 
         <activity
             android:name=".SettingsActivity"

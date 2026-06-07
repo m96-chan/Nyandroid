@@ -347,6 +347,27 @@ class TerminalView @JvmOverloads constructor(
     }
 
     private fun selectWord(row: Int, col: Int) {
+        // Get the line text and find word boundaries around col.
+        val lineText = controller.getLineText(row)
+        if (lineText != null && col < lineText.length) {
+            var start = col
+            var end = col
+            // Expand left.
+            while (start > 0 && isWordChar(lineText[start - 1])) start--
+            // Expand right.
+            while (end < lineText.length - 1 && isWordChar(lineText[end + 1])) end++
+            // Only select if we found a word.
+            if (isWordChar(lineText[col])) {
+                val range = SelectionRange.normalized(
+                    row, start, row, end,
+                    controller.currentViewportOffset(),
+                )
+                controller.setSelection(range)
+                showActionMode()
+                return
+            }
+        }
+        // Fallback: select the whole line.
         val range = SelectionRange.normalized(
             row, 0, row, controller.cols - 1,
             controller.currentViewportOffset(),
@@ -354,6 +375,9 @@ class TerminalView @JvmOverloads constructor(
         controller.setSelection(range)
         showActionMode()
     }
+
+    private fun isWordChar(c: Char): Boolean =
+        c.isLetterOrDigit() || c == '_' || c == '-' || c == '.' || c == '/' || c == '~'
 
     private fun showActionMode() {
         if (actionMode != null) return

@@ -51,6 +51,7 @@ class SshBackend(
 
     override var onOutput: ((ByteArray, Int) -> Unit)? = null
     override var onExit: ((Int) -> Unit)? = null
+    override var onStateChanged: ((String) -> Unit)? = null
 
     override fun start(cols: Int, rows: Int) {
         check(!running.get()) { "Backend already started" }
@@ -75,13 +76,16 @@ class SshBackend(
             attempt++
             try {
                 if (attempt == 1) {
+                    onStateChanged?.invoke("connecting")
                     emit("[Connecting to Debian VM...]\r\n")
                 } else {
+                    onStateChanged?.invoke("reconnecting")
                     emit("\r\n[Reconnecting (attempt $attempt)...]\r\n")
                 }
                 connectAndStream(cols, rows)
                 // connectAndStream blocks until the connection drops.
                 // If we get here, the connection ended.
+                onStateChanged?.invoke("disconnected")
                 attempt = 0 // Reset on successful connection
             } catch (e: AuthSetupRequiredException) {
                 Log.i(TAG, "SSH key not yet provisioned in VM")
@@ -144,6 +148,7 @@ class SshBackend(
         shell = sh
 
         running.set(true)
+        onStateChanged?.invoke("connected")
         lastCols = cols
         lastRows = rows
         emit("\u001b[2J\u001b[H") // Clear the status messages

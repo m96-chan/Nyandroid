@@ -32,6 +32,11 @@ interface TerminalBackend {
     /** Invoked once when the underlying process exits, with its status code. */
     var onExit: ((status: Int) -> Unit)?
 
+    /** Connection state change callback: "connecting", "connected", "reconnecting", "disconnected". */
+    var onStateChanged: ((state: String) -> Unit)?
+        get() = null
+        set(_) {}
+
     /** Spawns the process with the given initial terminal size. */
     fun start(cols: Int, rows: Int)
 

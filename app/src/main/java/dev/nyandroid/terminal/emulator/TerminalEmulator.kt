@@ -121,6 +121,10 @@ class TerminalEmulator(
         )
     }
 
+    fun getLineText(row: Int): String? = synchronized(lock) {
+        grid.getTextInRange(row, 0, row, grid.cols - 1, viewportOffset)
+    }
+
     fun isBracketedPasteMode(): Boolean = synchronized(lock) { grid.bracketedPasteMode }
     fun isApplicationCursorKeys(): Boolean = synchronized(lock) { grid.applicationCursorKeys }
     fun isApplicationKeypad(): Boolean = synchronized(lock) { grid.applicationKeypad }
