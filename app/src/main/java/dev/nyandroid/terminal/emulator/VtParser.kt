@@ -18,6 +18,8 @@ class VtParser(
     private val grid: TerminalGrid,
     private val respond: (ByteArray) -> Unit,
 ) {
+    /** Callback for OSC 99/777 notifications: (oscCode, payload). */
+    var onNotification: ((Int, String) -> Unit)? = null
     private enum class State { GROUND, ESCAPE, CSI, OSC, OSC_ESC, CHARSET, APC, APC_ESC }
 
     private var state = State.GROUND
@@ -258,7 +260,9 @@ class VtParser(
             10 -> parseOscColor(payload) { TerminalColors.DEFAULT_FG = it } // fg
             11 -> parseOscColor(payload) { TerminalColors.DEFAULT_BG = it } // bg
             12 -> parseOscColor(payload) { TerminalColors.CURSOR = it }     // cursor
-            133 -> parseOsc133(payload)        // shell integration marks
+            99 -> onNotification?.invoke(99, payload)   // kitty notification
+            133 -> parseOsc133(payload)                   // shell integration marks
+            777 -> onNotification?.invoke(777, payload)  // rxvt notification
         }
     }
 
