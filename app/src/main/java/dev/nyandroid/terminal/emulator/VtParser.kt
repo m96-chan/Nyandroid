@@ -119,7 +119,7 @@ class VtParser(
     private fun csi(b: Int) {
         when {
             b == '?'.code -> privateMarker = true
-            b == '>'.code || b == '!'.code -> { /* private prefixes we ignore */ }
+            b == '>'.code || b == '<'.code || b == '!'.code -> intermediateChar = b
             b in '0'.code..'9'.code -> {
                 if (currentParam < 0) currentParam = 0
                 currentParam = currentParam * 10 + (b - '0'.code)
@@ -173,10 +173,30 @@ class VtParser(
             'h' -> setMode(true)
             'l' -> setMode(false)
             's' -> grid.saveCursor()
-            'u' -> grid.restoreCursor()
+            'u' -> dispatchCsiU()
             'n' -> deviceStatusReport(param(0, 0))
             'q' -> if (intermediateChar == ' '.code) grid.setCursorShape(param(0, 0))
             else -> { /* unsupported: ignore */ }
+        }
+    }
+
+    private fun dispatchCsiU() {
+        when {
+            privateMarker -> {
+                // CSI ? u — query keyboard protocol flags.
+                // Respond with current flags: CSI ? <flags> u
+                val flags = grid.kittyKeyboardFlags
+                respond("\u001B[?${flags}u".toByteArray(StandardCharsets.US_ASCII))
+            }
+            intermediateChar == '>'.code -> {
+                // CSI > <flags> u — push keyboard mode.
+                grid.pushKittyKeyboardFlags(param(0, 0))
+            }
+            intermediateChar == '<'.code -> {
+                // CSI < u — pop keyboard mode.
+                grid.popKittyKeyboardFlags()
+            }
+            else -> grid.restoreCursor() // Plain CSI u = DECRC
         }
     }
 

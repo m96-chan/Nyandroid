@@ -70,6 +70,18 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     var mouseSgrFormat = false
         private set
 
+    // Kitty keyboard protocol (progressive enhancement).
+    private val kittyKeyboardStack = mutableListOf<Int>()
+    val kittyKeyboardFlags: Int get() = kittyKeyboardStack.lastOrNull() ?: 0
+
+    fun pushKittyKeyboardFlags(flags: Int) {
+        kittyKeyboardStack.add(flags)
+    }
+
+    fun popKittyKeyboardFlags() {
+        if (kittyKeyboardStack.isNotEmpty()) kittyKeyboardStack.removeLast()
+    }
+
     // Shell integration state.
     var currentWorkingDirectory: String? = null
     var lastCommandExitCode = 0
