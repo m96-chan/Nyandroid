@@ -23,7 +23,6 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.OverScroller
 import dev.nyandroid.terminal.emulator.SelectionRange
 import dev.nyandroid.terminal.emulator.TerminalGrid
-import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.input.KeyEncoder
 import dev.nyandroid.terminal.input.MouseEncoder
 
@@ -42,7 +41,8 @@ class TerminalView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : SurfaceView(context, attrs), SurfaceHolder.Callback {
 
-    private val controller: TerminalController
+    /** The active controller. Always set before the view receives input. */
+    internal lateinit var controller: TerminalController
     private val handler = Handler(Looper.getMainLooper())
 
     private val gestureDetector: GestureDetector
@@ -64,10 +64,6 @@ class TerminalView @JvmOverloads constructor(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     init {
-        val density = resources.displayMetrics.density
-        val fontSpec = FontSpec.create(context, DEFAULT_FONT_SP * density)
-        controller = TerminalController(context, fontSpec)
-
         gestureDetector = GestureDetector(context, TerminalGestureListener())
         gestureDetector.setIsLongpressEnabled(false) // We handle long-press ourselves.
 
@@ -76,11 +72,31 @@ class TerminalView @JvmOverloads constructor(
         isFocusableInTouchMode = true
     }
 
+    private var pendingSurface: Triple<android.view.Surface, Int, Int>? = null
+
+    /**
+     * Swap to a different [TerminalController] (tab switch). If the surface
+     * is already available, the new controller is wired up immediately.
+     */
+    fun setController(newController: TerminalController) {
+        val old = controller
+        if (old === newController) return
+        // Detach old controller from surface.
+        old?.onSurfaceDestroyed()
+        controller = newController
+        // Reattach to current surface if available.
+        pendingSurface?.let { (surface, w, h) ->
+            newController.onSurfaceAvailable(surface, w, h)
+        }
+    }
+
     // --- Surface lifecycle --------------------------------------------------
 
     override fun surfaceCreated(holder: SurfaceHolder) = Unit
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+        pendingSurface = Triple(holder.surface, width, height)
+        if (!::controller.isInitialized) return
         if (!surfaceReady) {
             surfaceReady = true
             controller.onSurfaceAvailable(holder.surface, width, height)
@@ -91,7 +107,8 @@ class TerminalView @JvmOverloads constructor(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         surfaceReady = false
-        controller.onSurfaceDestroyed()
+        pendingSurface = null
+        if (::controller.isInitialized) controller.onSurfaceDestroyed()
     }
 
     private var surfaceReady = false
@@ -366,7 +383,7 @@ class TerminalView @JvmOverloads constructor(
 
     fun shutdown() {
         handler.removeCallbacksAndMessages(null)
-        controller.destroy()
+        // Controller lifecycle is managed by TabManager, not here.
     }
 
     // --- Gesture listener ---------------------------------------------------

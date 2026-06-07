@@ -8,30 +8,47 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.view.ExtraKeysBar
+import dev.nyandroid.terminal.view.TabBar
+import dev.nyandroid.terminal.view.TabManager
 import dev.nyandroid.terminal.view.TerminalView
 
 /**
- * Single-screen host for the PoC terminal. Keeps the screen on and hands the
- * whole window to a [TerminalView].
+ * Single-screen host for the terminal. Supports multiple tabs, each with
+ * its own SSH session.
  */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var terminalView: TerminalView
     private lateinit var extraKeysBar: ExtraKeysBar
+    private lateinit var tabManager: TabManager
+    private lateinit var tabBar: TabBar
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        val density = resources.displayMetrics.density
+        val fontSpec = FontSpec.create(this, 14f * density)
+
+        tabManager = TabManager(this, fontSpec)
         terminalView = TerminalView(this)
         extraKeysBar = ExtraKeysBar(this, terminalView)
         terminalView.extraKeysBar = extraKeysBar
+        tabBar = TabBar(this, tabManager)
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
+        container.addView(
+            tabBar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         container.addView(
             terminalView,
             LinearLayout.LayoutParams(
@@ -56,16 +73,35 @@ class MainActivity : AppCompatActivity() {
             view.setPadding(
                 systemBars.left, systemBars.top, systemBars.right, bottomInset,
             )
-            // Show extra keys bar only when keyboard is visible.
             extraKeysBar.visibility = if (imeInsets.bottom > 0) View.VISIBLE else View.GONE
             WindowInsetsCompat.CONSUMED
         }
 
+        // Tab callbacks.
+        tabManager.onTabsChanged = {
+            tabBar.rebuild()
+            switchToActiveTab()
+        }
+        tabBar.onTabSwitch = { switchToActiveTab() }
+        tabBar.onNewTab = { createNewTab() }
+
+        // Create initial tab.
+        createNewTab()
         terminalView.requestFocus()
     }
 
+    private fun createNewTab() {
+        tabManager.createTab()
+        switchToActiveTab()
+    }
+
+    private fun switchToActiveTab() {
+        val tab = tabManager.activeTab ?: return
+        terminalView.setController(tab.controller)
+    }
+
     override fun onDestroy() {
-        terminalView.shutdown()
+        tabManager.destroyAll()
         super.onDestroy()
     }
 }
