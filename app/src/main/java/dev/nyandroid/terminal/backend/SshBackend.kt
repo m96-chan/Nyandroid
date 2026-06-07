@@ -83,6 +83,7 @@ class SshBackend(
             addHostKeyVerifier(PromiscuousVerifier())
             connectTimeout = CONNECT_TIMEOUT_MS
             connect(endpoint.host, endpoint.port)
+            connection.keepAlive.keepAliveInterval = KEEPALIVE_INTERVAL_SEC
         }
         sshClient = client
 
@@ -221,6 +222,7 @@ class SshBackend(
         const val DEFAULT_USER = "droid"
         const val READ_BUFFER_SIZE = 8192
         const val CONNECT_TIMEOUT_MS = 10_000
+        const val KEEPALIVE_INTERVAL_SEC = 30
 
         init {
             Security.removeProvider("BC")
