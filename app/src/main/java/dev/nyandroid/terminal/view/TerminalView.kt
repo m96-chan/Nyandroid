@@ -79,10 +79,11 @@ class TerminalView @JvmOverloads constructor(
      * is already available, the new controller is wired up immediately.
      */
     fun setController(newController: TerminalController) {
-        val old = controller
-        if (old === newController) return
-        // Detach old controller from surface.
-        old?.onSurfaceDestroyed()
+        if (::controller.isInitialized) {
+            if (controller === newController) return
+            // Detach old controller from surface.
+            controller.onSurfaceDestroyed()
+        }
         controller = newController
         // Reattach to current surface if available.
         pendingSurface?.let { (surface, w, h) ->

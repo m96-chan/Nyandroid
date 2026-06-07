@@ -139,9 +139,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 if (!more) {
                     // Complete image received.
                     val decoded = try {
-                        android.util.Base64.decode(
+                        java.util.Base64.getDecoder().decode(
                             graphicsDataAccumulator.toString(),
-                            android.util.Base64.DEFAULT,
                         )
                     } catch (_: Exception) { byteArrayOf() }
                     if (decoded.isNotEmpty()) {

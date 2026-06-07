@@ -39,6 +39,16 @@ class MainActivity : AppCompatActivity() {
         terminalView.extraKeysBar = extraKeysBar
         tabBar = TabBar(this, tabManager)
 
+        // Create initial tab and set controller BEFORE setContentView, because
+        // SurfaceView callbacks fire during layout and access the controller.
+        tabManager.onTabsChanged = {
+            tabBar.rebuild()
+            switchToActiveTab()
+        }
+        tabBar.onTabSwitch = { switchToActiveTab() }
+        tabBar.onNewTab = { createNewTab() }
+        createNewTab()
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -77,16 +87,6 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        // Tab callbacks.
-        tabManager.onTabsChanged = {
-            tabBar.rebuild()
-            switchToActiveTab()
-        }
-        tabBar.onTabSwitch = { switchToActiveTab() }
-        tabBar.onNewTab = { createNewTab() }
-
-        // Create initial tab.
-        createNewTab()
         terminalView.requestFocus()
     }
 
