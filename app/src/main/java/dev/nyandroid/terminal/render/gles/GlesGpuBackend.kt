@@ -34,6 +34,10 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
     private var uCellPx = -1
     private var uViewportPx = -1
     private var uAtlas = -1
+    private var uBgOpacity = -1
+
+    /** Background opacity: 1.0 = fully opaque (default), 0.0 = fully transparent. */
+    var backgroundOpacity = 1.0f
 
     private var viewportW = 0
     private var viewportH = 0
@@ -50,11 +54,13 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             uCellPx = it.uniform("u_cellPx")
             uViewportPx = it.uniform("u_viewportPx")
             uAtlas = it.uniform("u_atlas")
+            uBgOpacity = it.uniform("u_bgOpacity")
         }
         atlas.init()
         setupBuffers()
 
-        GLES30.glDisable(GLES30.GL_BLEND)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDisable(GLES30.GL_DEPTH_TEST)
         GLES30.glViewport(0, 0, width, height)
     }
@@ -113,7 +119,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         val bgR = ((TerminalColors.DEFAULT_BG shr 16) and 0xFF) / 255f
         val bgG = ((TerminalColors.DEFAULT_BG shr 8) and 0xFF) / 255f
         val bgB = (TerminalColors.DEFAULT_BG and 0xFF) / 255f
-        GLES30.glClearColor(bgR, bgG, bgB, 1f)
+        GLES30.glClearColor(bgR, bgG, bgB, backgroundOpacity)
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
 
         if (cellCount == 0) {
@@ -166,6 +172,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         GLES30.glUniform2f(uCellPx, metrics.width.toFloat(), metrics.height.toFloat())
         GLES30.glUniform2f(uViewportPx, viewportW.toFloat(), viewportH.toFloat())
         GLES30.glUniform1i(uAtlas, 0)
+        GLES30.glUniform1f(uBgOpacity, backgroundOpacity)
         atlas.bind(0)
 
         GLES30.glBindVertexArray(vao)
@@ -316,10 +323,13 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             in vec3 v_fg;
             in vec3 v_bg;
             uniform sampler2D u_atlas;
+            uniform float u_bgOpacity;
             out vec4 fragColor;
             void main() {
                 float coverage = texture(u_atlas, v_uv).r;
-                fragColor = vec4(mix(v_bg, v_fg, coverage), 1.0);
+                vec3 color = mix(v_bg, v_fg, coverage);
+                float alpha = mix(u_bgOpacity, 1.0, coverage);
+                fragColor = vec4(color, alpha);
             }
         """.trimIndent()
     }
