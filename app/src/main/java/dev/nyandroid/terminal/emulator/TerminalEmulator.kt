@@ -116,6 +116,8 @@ class TerminalEmulator(
     fun isBracketedPasteMode(): Boolean = synchronized(lock) { grid.bracketedPasteMode }
     fun isApplicationCursorKeys(): Boolean = synchronized(lock) { grid.applicationCursorKeys }
     fun isApplicationKeypad(): Boolean = synchronized(lock) { grid.applicationKeypad }
+    fun mouseTrackingMode(): Int = synchronized(lock) { grid.mouseTrackingMode }
+    fun mouseSgrFormat(): Boolean = synchronized(lock) { grid.mouseSgrFormat }
 
     fun currentViewportOffset(): Int = synchronized(lock) { viewportOffset }
 }

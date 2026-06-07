@@ -183,6 +183,10 @@ class VtParser(
             1 -> grid.setApplicationCursorKeys(enable)  // DECCKM
             25 -> grid.setCursorVisible(enable)         // DECTCEM
             47, 1047, 1049 -> grid.setAltScreen(enable) // alternate screen
+            1000 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_X10 else TerminalGrid.MOUSE_NONE)
+            1002 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_BUTTON else TerminalGrid.MOUSE_NONE)
+            1003 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_ANY else TerminalGrid.MOUSE_NONE)
+            1006 -> grid.setMouseSgrFormat(enable)      // SGR extended mouse
             2004 -> grid.setBracketedPasteMode(enable)  // bracketed paste
         }
     }

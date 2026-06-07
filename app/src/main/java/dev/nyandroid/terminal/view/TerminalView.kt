@@ -22,8 +22,10 @@ import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import android.widget.OverScroller
 import dev.nyandroid.terminal.emulator.SelectionRange
+import dev.nyandroid.terminal.emulator.TerminalGrid
 import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.input.KeyEncoder
+import dev.nyandroid.terminal.input.MouseEncoder
 
 /**
  * The on-screen terminal. A [SurfaceView] (not GLSurfaceView) so the GPU API
@@ -136,9 +138,20 @@ class TerminalView @JvmOverloads constructor(
 
     internal var extraKeysBar: ExtraKeysBar? = null
 
-    // --- Touch (scroll + selection) -----------------------------------------
+    // --- Touch (scroll + selection + mouse reporting) -----------------------
+
+    /** Whether a mouse button is currently "pressed" for drag tracking. */
+    private var mouseButtonDown = false
+
+    private fun isMouseMode(): Boolean =
+        controller.mouseTrackingMode() != TerminalGrid.MOUSE_NONE
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // If mouse tracking is active, route touch events as mouse reports.
+        if (isMouseMode()) {
+            return handleMouseEvent(event)
+        }
+
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 longPressDownX = event.x
@@ -175,6 +188,54 @@ class TerminalView @JvmOverloads constructor(
 
         if (!selecting) {
             gestureDetector.onTouchEvent(event)
+        }
+        return true
+    }
+
+    private fun handleMouseEvent(event: MotionEvent): Boolean {
+        val (row, col) = touchToCell(event.x, event.y)
+        val row1 = row + 1 // 1-based for mouse protocol
+        val col1 = col + 1
+        val sgr = controller.mouseSgrFormat()
+        val mode = controller.mouseTrackingMode()
+
+        when (event.action) {
+            MotionEvent.ACTION_DOWN -> {
+                mouseButtonDown = true
+                // Also show keyboard on tap in mouse mode.
+                requestFocus()
+                showKeyboard()
+                controller.write(
+                    MouseEncoder.encode(MouseEncoder.BUTTON_LEFT, col1, row1, release = false, sgr),
+                )
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (mouseButtonDown && mode >= TerminalGrid.MOUSE_BUTTON) {
+                    controller.write(
+                        MouseEncoder.encode(
+                            MouseEncoder.BUTTON_LEFT or MouseEncoder.MODIFIER_DRAG,
+                            col1, row1, release = false, sgr,
+                        ),
+                    )
+                } else if (!mouseButtonDown && mode >= TerminalGrid.MOUSE_ANY) {
+                    controller.write(
+                        MouseEncoder.encode(
+                            MouseEncoder.BUTTON_RELEASE or MouseEncoder.MODIFIER_DRAG,
+                            col1, row1, release = false, sgr,
+                        ),
+                    )
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                mouseButtonDown = false
+                controller.write(
+                    MouseEncoder.encode(MouseEncoder.BUTTON_LEFT, col1, row1, release = true, sgr),
+                )
+                performClick()
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                mouseButtonDown = false
+            }
         }
         return true
     }
@@ -334,6 +395,26 @@ class TerminalView @JvmOverloads constructor(
         override fun onScroll(
             e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float,
         ): Boolean {
+            if (isMouseMode()) {
+                // In mouse mode, scroll → wheel events.
+                val cellHeight = controller.metrics.height.toFloat()
+                if (cellHeight <= 0f) return true
+                scrollAccumulator += distanceY
+                val lines = (scrollAccumulator / cellHeight).toInt()
+                if (lines != 0) {
+                    scrollAccumulator -= lines * cellHeight
+                    val (row, col) = touchToCell(e2.x, e2.y)
+                    val sgr = controller.mouseSgrFormat()
+                    val button = if (lines > 0) MouseEncoder.BUTTON_SCROLL_UP
+                        else MouseEncoder.BUTTON_SCROLL_DOWN
+                    repeat(kotlin.math.abs(lines)) {
+                        controller.write(
+                            MouseEncoder.encode(button, col + 1, row + 1, release = false, sgr),
+                        )
+                    }
+                }
+                return true
+            }
             applyScrollDelta(distanceY)
             return true
         }
@@ -341,6 +422,7 @@ class TerminalView @JvmOverloads constructor(
         override fun onFling(
             e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float,
         ): Boolean {
+            if (isMouseMode()) return true // No fling in mouse mode.
             lastFlingY = 0
             scroller.fling(
                 0, 0, 0, (-velocityY).toInt(),

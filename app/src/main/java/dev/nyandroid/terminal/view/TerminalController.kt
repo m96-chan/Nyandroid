@@ -88,6 +88,8 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
 
     fun isApplicationCursorKeys(): Boolean = emulator.isApplicationCursorKeys()
     fun isApplicationKeypad(): Boolean = emulator.isApplicationKeypad()
+    fun mouseTrackingMode(): Int = emulator.mouseTrackingMode()
+    fun mouseSgrFormat(): Boolean = emulator.mouseSgrFormat()
 
     fun paste(text: String) {
         if (text.isEmpty()) return

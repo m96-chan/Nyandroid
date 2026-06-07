@@ -62,6 +62,14 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     var applicationKeypad = false
         private set
 
+    // Mouse reporting modes (mutually exclusive tracking modes + format flag).
+    /** ?1000: X10-compatible button press/release reporting. */
+    var mouseTrackingMode = MOUSE_NONE
+        private set
+    /** ?1006: SGR extended mouse format (CSI < ... M/m). */
+    var mouseSgrFormat = false
+        private set
+
     // Saved cursor (DECSC / DECRC and CSI s/u).
     private var savedRow = 0
     private var savedCol = 0
@@ -483,6 +491,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         bracketedPasteMode = false
         applicationCursorKeys = false
         applicationKeypad = false
+        mouseTrackingMode = MOUSE_NONE
+        mouseSgrFormat = false
         scrollback.clear()
     }
 
@@ -619,6 +629,14 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         applicationKeypad = enable
     }
 
+    fun setMouseTracking(mode: Int) {
+        mouseTrackingMode = mode
+    }
+
+    fun setMouseSgrFormat(enable: Boolean) {
+        mouseSgrFormat = enable
+    }
+
     // --- Selection -----------------------------------------------------------
 
     /**
@@ -721,5 +739,11 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         const val CURSOR_UNDERLINE_STEADY = 4
         const val CURSOR_BEAM_BLINK = 5
         const val CURSOR_BEAM_STEADY = 6
+
+        // Mouse tracking modes.
+        const val MOUSE_NONE = 0
+        const val MOUSE_X10 = 1000       // ?1000: button press/release
+        const val MOUSE_BUTTON = 1002    // ?1002: button event (press/release/drag)
+        const val MOUSE_ANY = 1003       // ?1003: any event (includes motion)
     }
 }
