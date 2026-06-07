@@ -70,6 +70,22 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     var mouseSgrFormat = false
         private set
 
+    // Shell integration state.
+    var currentWorkingDirectory: String? = null
+    var lastCommandExitCode = 0
+        private set
+    /** Row index where the last prompt started (for prompt-to-prompt jump). */
+    var promptStartRow = -1
+        private set
+    /** Row index where the last command output started. */
+    var outputStartRow = -1
+        private set
+
+    fun shellMarkPromptStart() { promptStartRow = cursorRow }
+    fun shellMarkCommandStart() { /* command begins at cursor */ }
+    fun shellMarkOutputStart() { outputStartRow = cursorRow }
+    fun shellMarkCommandEnd(exitCode: Int) { lastCommandExitCode = exitCode }
+
     // Saved cursor (DECSC / DECRC and CSI s/u).
     private var savedRow = 0
     private var savedCol = 0

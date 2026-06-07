@@ -229,10 +229,11 @@ class VtParser(
         val payload = s.substring(semi + 1)
         when (code) {
             4 -> parseOsc4(payload)      // palette color
+            7 -> parseOsc7(payload)            // CWD reporting
             10 -> parseOscColor(payload) { TerminalColors.DEFAULT_FG = it } // fg
             11 -> parseOscColor(payload) { TerminalColors.DEFAULT_BG = it } // bg
             12 -> parseOscColor(payload) { TerminalColors.CURSOR = it }     // cursor
-            // 0, 1, 2: window title — ignored for now
+            133 -> parseOsc133(payload)        // shell integration marks
         }
     }
 
@@ -248,6 +249,31 @@ class VtParser(
     private inline fun parseOscColor(payload: String, setter: (Int) -> Unit) {
         val color = parseHexColor(payload) ?: return
         setter(color)
+    }
+
+    private fun parseOsc7(payload: String) {
+        // Format: file://hostname/path
+        val prefix = "file://"
+        if (!payload.startsWith(prefix)) return
+        val rest = payload.removePrefix(prefix)
+        val slashIdx = rest.indexOf('/')
+        if (slashIdx < 0) return
+        val path = rest.substring(slashIdx)
+        grid.currentWorkingDirectory = path
+    }
+
+    private fun parseOsc133(payload: String) {
+        // Shell integration marks: A=prompt start, B=command start,
+        // C=output start, D;exitcode=command end
+        when {
+            payload == "A" -> grid.shellMarkPromptStart()
+            payload == "B" -> grid.shellMarkCommandStart()
+            payload == "C" -> grid.shellMarkOutputStart()
+            payload.startsWith("D") -> {
+                val exitCode = payload.removePrefix("D").removePrefix(";").toIntOrNull() ?: 0
+                grid.shellMarkCommandEnd(exitCode)
+            }
+        }
     }
 
     private fun parseHexColor(s: String): Int? {
