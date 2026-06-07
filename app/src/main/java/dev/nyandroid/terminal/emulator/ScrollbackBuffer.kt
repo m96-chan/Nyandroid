@@ -9,9 +9,9 @@ package dev.nyandroid.terminal.emulator
  * silently evicted. Retrieval is indexed from the most recent line
  * (`linesBack = 1`) to the oldest (`linesBack = storedLines`).
  */
-class ScrollbackBuffer(val maxLines: Int, private var cols: Int) {
+class ScrollbackBuffer(val maxLines: Int, internal var cols: Int) {
 
-    private var cpBuf = IntArray(maxLines * cols)
+    internal var cpBuf = IntArray(maxLines * cols)
     private var fgBuf = IntArray(maxLines * cols)
     private var bgBuf = IntArray(maxLines * cols)
     private var flBuf = IntArray(maxLines * cols)

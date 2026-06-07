@@ -47,6 +47,9 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     /** Deferred wrap: set after writing the last column (xterm semantics). */
     private var wrapPending = false
 
+    var bracketedPasteMode = false
+        private set
+
     // Saved cursor (DECSC / DECRC and CSI s/u).
     private var savedRow = 0
     private var savedCol = 0
@@ -427,6 +430,7 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         cursorVisible = true
         wrapPending = false
         onAltScreen = false
+        bracketedPasteMode = false
         scrollback.clear()
     }
 
@@ -536,6 +540,88 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         }
     }
 
+    fun setBracketedPasteMode(enable: Boolean) {
+        bracketedPasteMode = enable
+    }
+
+    // --- Selection -----------------------------------------------------------
+
+    /**
+     * Returns the text content within the given viewport row/col range.
+     * Trailing spaces on each line are trimmed; lines are joined with newline.
+     *
+     * @param startRow viewport row (0-based, top of visible area)
+     * @param startCol column
+     * @param endRow viewport row
+     * @param endCol column (inclusive)
+     * @param viewportOffset current scrollback offset
+     */
+    fun getTextInRange(
+        startRow: Int, startCol: Int,
+        endRow: Int, endCol: Int,
+        viewportOffset: Int,
+    ): String {
+        val sb = StringBuilder()
+        for (r in startRow..endRow) {
+            val c1 = if (r == startRow) startCol else 0
+            val c2 = if (r == endRow) endCol else cols - 1
+            val line = StringBuilder()
+            for (c in c1..c2.coerceAtMost(cols - 1)) {
+                val cp = getCellCodePoint(r, viewportOffset)?.get(c) ?: ' '.code
+                if (cp != 0) line.appendCodePoint(cp) else line.append(' ')
+            }
+            // Trim trailing spaces.
+            var end = line.length
+            while (end > 0 && line[end - 1] == ' ') end--
+            if (sb.isNotEmpty()) sb.append('\n')
+            sb.append(line, 0, end)
+        }
+        return sb.toString()
+    }
+
+    /**
+     * Returns the codepoint array for a viewport row, or null if out of range.
+     */
+    private fun getCellCodePoint(viewportRow: Int, viewportOffset: Int): IntArray? {
+        val scrollbackRows = minOf(viewportOffset, rows)
+        return if (viewportRow < scrollbackRows) {
+            val linesBack = viewportOffset - viewportRow
+            if (linesBack <= scrollback.storedLines) {
+                IntArray(cols).also { dst ->
+                    val ringIdx = (scrollback.totalLines - linesBack).mod(scrollback.maxLines)
+                    System.arraycopy(scrollback.cpBuf, ringIdx * cols, dst, 0, minOf(scrollback.cols, cols))
+                }
+            } else null
+        } else {
+            val screenRow = viewportRow - scrollbackRows
+            if (screenRow in 0 until rows) {
+                IntArray(cols).also { dst ->
+                    System.arraycopy(cp, screenRow * cols, dst, 0, cols)
+                }
+            } else null
+        }
+    }
+
+    /**
+     * Applies selection highlight to the snapshot arrays. Called after cursor baking.
+     */
+    fun applySelectionHighlight(
+        of: IntArray, ob: IntArray,
+        startRow: Int, startCol: Int,
+        endRow: Int, endCol: Int,
+    ) {
+        for (r in startRow..endRow.coerceAtMost(rows - 1)) {
+            if (r < 0) continue
+            val c1 = if (r == startRow) startCol.coerceAtLeast(0) else 0
+            val c2 = if (r == endRow) endCol.coerceAtMost(cols - 1) else cols - 1
+            for (c in c1..c2) {
+                val i = r * cols + c
+                of[i] = SELECTION_FG
+                ob[i] = SELECTION_BG
+            }
+        }
+    }
+
     companion object {
         const val TAB_WIDTH = 8
         const val DEFAULT_SCROLLBACK = 10_000
@@ -545,5 +631,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         const val ITALIC = 4
         const val UNDERLINE = 8
         const val REVERSE = 16
+
+        const val SELECTION_FG = 0xFFFFFF
+        const val SELECTION_BG = 0x264F78
     }
 }

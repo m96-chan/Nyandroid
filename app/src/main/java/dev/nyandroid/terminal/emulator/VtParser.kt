@@ -177,6 +177,7 @@ class VtParser(
         when (param(0, 0)) {
             25 -> grid.setCursorVisible(enable)         // DECTCEM
             47, 1047, 1049 -> grid.setAltScreen(enable) // alternate screen
+            2004 -> grid.setBracketedPasteMode(enable)  // bracketed paste
         }
     }
 

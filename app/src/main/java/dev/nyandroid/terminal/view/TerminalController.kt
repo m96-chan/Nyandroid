@@ -5,6 +5,7 @@ import android.util.Log
 import android.view.Surface
 import dev.nyandroid.terminal.backend.SshBackend
 import dev.nyandroid.terminal.backend.TerminalBackend
+import dev.nyandroid.terminal.emulator.SelectionRange
 import dev.nyandroid.terminal.emulator.TerminalEmulator
 import dev.nyandroid.terminal.font.CellMetrics
 import dev.nyandroid.terminal.font.FontSpec
@@ -30,8 +31,10 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
     private val renderThread = RenderThread(gpu) { frame -> emulator.snapshot(frame) }
 
     private var started = false
-    private var cols = DEFAULT_COLS
-    private var rows = DEFAULT_ROWS
+    var cols = DEFAULT_COLS
+        private set
+    var rows = DEFAULT_ROWS
+        private set
 
     init {
         emulator.onChange = { renderThread.requestRender() }
@@ -74,6 +77,21 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
 
     fun scrollViewport(lines: Int) {
         emulator.scrollViewport(lines)
+    }
+
+    fun setSelection(range: SelectionRange) = emulator.setSelection(range)
+    fun clearSelection() = emulator.clearSelection()
+    fun getSelectedText(): String? = emulator.getSelectedText()
+    fun currentViewportOffset(): Int = emulator.currentViewportOffset()
+
+    fun paste(text: String) {
+        if (text.isEmpty()) return
+        val bytes = if (emulator.isBracketedPasteMode()) {
+            "\u001b[200~${text}\u001b[201~".toByteArray(Charsets.UTF_8)
+        } else {
+            text.toByteArray(Charsets.UTF_8)
+        }
+        backend.write(bytes)
     }
 
     fun destroy() {

@@ -22,6 +22,9 @@ class TerminalEmulator(
     /** Lines scrolled back from the live screen. 0 = at bottom (live). */
     private var viewportOffset = 0
 
+    /** Current text selection, or null. */
+    private var selection: SelectionRange? = null
+
     /** Invoked (on the feeding thread) whenever the screen changed. */
     var onChange: (() -> Unit)? = null
 
@@ -52,6 +55,15 @@ class TerminalEmulator(
      */
     fun snapshot(out: FrameSnapshot): Long = synchronized(lock) {
         grid.snapshotInto(out, viewportOffset)
+        // Apply selection highlight if active and viewport matches.
+        selection?.let { sel ->
+            if (sel.viewportOffset == viewportOffset) {
+                grid.applySelectionHighlight(
+                    out.fg, out.bg,
+                    sel.startRow, sel.startCol, sel.endRow, sel.endCol,
+                )
+            }
+        }
         out.markUpdated(revision)
         revision
     }
@@ -71,4 +83,34 @@ class TerminalEmulator(
 
     /** Whether currently on the alternate screen (UI may disable scrollback). */
     fun isAltScreen(): Boolean = synchronized(lock) { grid.onAltScreen }
+
+    // --- Selection -----------------------------------------------------------
+
+    fun setSelection(range: SelectionRange) {
+        synchronized(lock) {
+            selection = range
+            revision++
+        }
+        onChange?.invoke()
+    }
+
+    fun clearSelection() {
+        synchronized(lock) {
+            if (selection == null) return
+            selection = null
+            revision++
+        }
+        onChange?.invoke()
+    }
+
+    fun getSelectedText(): String? = synchronized(lock) {
+        val sel = selection ?: return null
+        grid.getTextInRange(
+            sel.startRow, sel.startCol, sel.endRow, sel.endCol, sel.viewportOffset,
+        )
+    }
+
+    fun isBracketedPasteMode(): Boolean = synchronized(lock) { grid.bracketedPasteMode }
+
+    fun currentViewportOffset(): Int = synchronized(lock) { viewportOffset }
 }
