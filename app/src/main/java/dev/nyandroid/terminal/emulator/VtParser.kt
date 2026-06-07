@@ -20,6 +20,9 @@ class VtParser(
 ) {
     /** Callback for OSC 99/777 notifications: (oscCode, payload). */
     var onNotification: ((Int, String) -> Unit)? = null
+
+    /** Callback for BEL (terminal bell). */
+    var onBell: (() -> Unit)? = null
     private enum class State { GROUND, ESCAPE, CSI, OSC, OSC_ESC, CHARSET, APC, APC_ESC }
 
     private var state = State.GROUND
@@ -83,7 +86,7 @@ class VtParser(
 
     private fun control(b: Int) {
         when (b) {
-            BEL -> { /* bell: no-op for PoC */ }
+            BEL -> onBell?.invoke()
             BS -> grid.backspace()
             HT -> grid.tab()
             LF, VT, FF -> grid.lineFeed()

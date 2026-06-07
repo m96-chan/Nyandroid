@@ -1,6 +1,10 @@
 package dev.nyandroid.terminal.view
 
 import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import android.view.Surface
 import dev.nyandroid.terminal.backend.SshBackend
@@ -40,9 +44,23 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
 
     init {
         emulator.onChange = { renderThread.requestRender() }
+        emulator.onBell = { performBell(context) }
         backend.onOutput = { buffer, length -> emulator.feed(buffer, length) }
         backend.onExit = { status -> Log.i(TAG, "Shell exited with status $status") }
         renderThread.start()
+    }
+
+    private fun performBell(context: Context) {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+        } catch (_: Exception) { /* no vibrator */ }
     }
 
     fun onSurfaceAvailable(surface: Surface, width: Int, height: Int) {

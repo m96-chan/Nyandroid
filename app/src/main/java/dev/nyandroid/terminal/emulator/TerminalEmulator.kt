@@ -28,6 +28,13 @@ class TerminalEmulator(
     /** Invoked (on the feeding thread) whenever the screen changed. */
     var onChange: (() -> Unit)? = null
 
+    /** Invoked on BEL (terminal bell). */
+    var onBell: (() -> Unit)? = null
+
+    init {
+        parser.onBell = { onBell?.invoke() }
+    }
+
     val cols: Int get() = synchronized(lock) { grid.cols }
     val rows: Int get() = synchronized(lock) { grid.rows }
 
