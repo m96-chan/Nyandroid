@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
         terminalView = TerminalView(this)
         extraKeysBar = ExtraKeysBar(this, terminalView)
         terminalView.extraKeysBar = extraKeysBar
+        extraKeysBar.onSettingsPressed = { SettingsActivity.launch(this) }
         terminalView.keyBindings = config.keyBindings
         terminalView.onKeyBindingAction = { action, args -> handleKeyAction(action, args) }
         terminalView.onFontSizeChanged = { newSizePx ->

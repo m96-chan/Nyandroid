@@ -48,7 +48,11 @@ class ExtraKeysBar(
         addKey("\u2191") { sendKeyCode(KeyEvent.KEYCODE_DPAD_UP) }    // ↑
         addKey("\u2193") { sendKeyCode(KeyEvent.KEYCODE_DPAD_DOWN) }  // ↓
         addKey("\u2192") { sendKeyCode(KeyEvent.KEYCODE_DPAD_RIGHT) } // →
+        addKey("\u2699") { onSettingsPressed?.invoke() } // ⚙
     }
+
+    /** Callback when the settings gear is pressed. */
+    var onSettingsPressed: (() -> Unit)? = null
 
     private fun addKey(label: String, action: () -> Unit) {
         val tv = createButton(label)
