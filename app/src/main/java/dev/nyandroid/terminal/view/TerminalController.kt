@@ -11,6 +11,7 @@ import dev.nyandroid.terminal.backend.SshBackend
 import dev.nyandroid.terminal.backend.TerminalBackend
 import dev.nyandroid.terminal.emulator.SelectionRange
 import dev.nyandroid.terminal.emulator.TerminalEmulator
+import dev.nyandroid.terminal.emulator.TerminalGrid
 import dev.nyandroid.terminal.font.CellMetrics
 import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.font.GlyphRasterizer
@@ -23,7 +24,11 @@ import dev.nyandroid.terminal.render.gles.GlesGpuBackend
  * GPU renderer — and owns geometry. The view delegates surface and input
  * events here; everything below stays decoupled from Android view plumbing.
  */
-class TerminalController(context: Context, fontSpec: FontSpec) {
+class TerminalController(
+    context: Context,
+    fontSpec: FontSpec,
+    scrollbackLines: Int = TerminalGrid.DEFAULT_SCROLLBACK,
+) {
 
     val metrics: CellMetrics = CellMetrics.measure(fontSpec)
 
@@ -31,7 +36,7 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
     private val rasterizer = GlyphRasterizer(fontSpec, metrics, fontFamily)
     private val gpu = GlesGpuBackend(rasterizer)
     private val backend: TerminalBackend = SshBackend(context)
-    private val emulator = TerminalEmulator(DEFAULT_COLS, DEFAULT_ROWS) { bytes ->
+    private val emulator = TerminalEmulator(DEFAULT_COLS, DEFAULT_ROWS, scrollbackLines) { bytes ->
         backend.write(bytes)
     }
     private val renderThread = RenderThread(gpu) { frame -> emulator.snapshot(frame) }

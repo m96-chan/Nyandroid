@@ -10,6 +10,7 @@ import dev.nyandroid.terminal.font.FontSpec
 class TabManager(
     private val context: Context,
     private val fontSpec: FontSpec,
+    private val scrollbackLines: Int = 10_000,
 ) {
     data class Tab(
         val id: Int,
@@ -31,7 +32,7 @@ class TabManager(
     fun getTabs(): List<Tab> = tabs.toList()
 
     fun createTab(): Tab {
-        val controller = TerminalController(context, fontSpec)
+        val controller = TerminalController(context, fontSpec, scrollbackLines)
         val tab = Tab(nextId++, controller, "Terminal ${tabs.size + 1}")
         tabs.add(tab)
         activeIndex = tabs.size - 1

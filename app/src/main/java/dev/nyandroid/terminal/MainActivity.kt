@@ -8,6 +8,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import dev.nyandroid.terminal.config.KittyConfig
 import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.view.ExtraKeysBar
 import dev.nyandroid.terminal.view.TabBar
@@ -30,10 +31,13 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        val density = resources.displayMetrics.density
-        val fontSpec = FontSpec.create(this, 14f * density)
+        val config = KittyConfig.load(this)
+        KittyConfig.applyColors(config)
 
-        tabManager = TabManager(this, fontSpec)
+        val density = resources.displayMetrics.density
+        val fontSpec = FontSpec.create(this, config.fontSize * density)
+
+        tabManager = TabManager(this, fontSpec, config.scrollbackLines)
         terminalView = TerminalView(this)
         extraKeysBar = ExtraKeysBar(this, terminalView)
         terminalView.extraKeysBar = extraKeysBar

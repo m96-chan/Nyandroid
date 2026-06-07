@@ -10,11 +10,12 @@ package dev.nyandroid.terminal.emulator
 class TerminalEmulator(
     cols: Int,
     rows: Int,
+    scrollbackLines: Int = TerminalGrid.DEFAULT_SCROLLBACK,
     /** Used for terminal replies (DSR/cursor reports). Routed to the backend. */
     private val respond: (ByteArray) -> Unit,
 ) {
     private val lock = Any()
-    private val grid = TerminalGrid(cols, rows)
+    private val grid = TerminalGrid(cols, rows, scrollbackLines)
     private val parser = VtParser(grid, respond)
 
     private var revision = 0L
