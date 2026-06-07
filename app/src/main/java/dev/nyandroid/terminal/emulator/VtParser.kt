@@ -28,6 +28,9 @@ class VtParser(
     private var privateMarker = false
     private var intermediateChar = 0
 
+    // OSC string buffer.
+    private val oscBuffer = StringBuilder()
+
     // Incremental UTF-8 decoding.
     private var utf8Remaining = 0
     private var utf8CodePoint = 0
@@ -88,7 +91,7 @@ class VtParser(
     private fun escape(b: Int) {
         when (b.toChar()) {
             '[' -> beginCsi()
-            ']' -> state = State.OSC
+            ']' -> { oscBuffer.setLength(0); state = State.OSC }
             'M' -> { grid.reverseIndex(); state = State.GROUND }
             'D' -> { grid.lineFeed(); state = State.GROUND }
             'E' -> { grid.carriageReturn(); grid.lineFeed(); state = State.GROUND }
@@ -204,16 +207,63 @@ class VtParser(
     // --- OSC ----------------------------------------------------------------
 
     private fun osc(b: Int) {
-        // Consume the string until BEL or ST (ESC \). Titles are ignored for now.
         when (b) {
-            BEL -> state = State.GROUND
+            BEL -> { dispatchOsc(); state = State.GROUND }
             ESC -> state = State.OSC_ESC
+            else -> {
+                if (oscBuffer.length < MAX_OSC_LEN) oscBuffer.append(b.toChar())
+            }
         }
     }
 
     private fun oscEsc(b: Int) {
-        // Either the '\' that completes ST, or a stray byte; either way, done.
+        if (b == '\\'.code) dispatchOsc()
         state = State.GROUND
+    }
+
+    private fun dispatchOsc() {
+        val s = oscBuffer.toString()
+        val semi = s.indexOf(';')
+        if (semi < 0) return
+        val code = s.substring(0, semi).toIntOrNull() ?: return
+        val payload = s.substring(semi + 1)
+        when (code) {
+            4 -> parseOsc4(payload)      // palette color
+            10 -> parseOscColor(payload) { TerminalColors.DEFAULT_FG = it } // fg
+            11 -> parseOscColor(payload) { TerminalColors.DEFAULT_BG = it } // bg
+            12 -> parseOscColor(payload) { TerminalColors.CURSOR = it }     // cursor
+            // 0, 1, 2: window title — ignored for now
+        }
+    }
+
+    private fun parseOsc4(payload: String) {
+        // Format: index;color e.g. "1;#ff0000"
+        val parts = payload.split(';', limit = 2)
+        if (parts.size < 2) return
+        val index = parts[0].toIntOrNull() ?: return
+        val color = parseHexColor(parts[1]) ?: return
+        TerminalColors.setPaletteColor(index, color)
+    }
+
+    private inline fun parseOscColor(payload: String, setter: (Int) -> Unit) {
+        val color = parseHexColor(payload) ?: return
+        setter(color)
+    }
+
+    private fun parseHexColor(s: String): Int? {
+        val hex = s.trim().removePrefix("#").removePrefix("rgb:")
+        // Handle rgb:RR/GG/BB format
+        if (hex.contains('/')) {
+            val parts = hex.split('/')
+            if (parts.size == 3) {
+                val r = parts[0].take(2).toIntOrNull(16) ?: return null
+                val g = parts[1].take(2).toIntOrNull(16) ?: return null
+                val b = parts[2].take(2).toIntOrNull(16) ?: return null
+                return (r shl 16) or (g shl 8) or b
+            }
+            return null
+        }
+        return if (hex.length == 6) hex.toIntOrNull(16) else null
     }
 
     companion object {
@@ -230,5 +280,6 @@ class VtParser(
         private const val CR = 0x0D
         private const val SO = 0x0E
         private const val SI = 0x0F
+        private const val MAX_OSC_LEN = 512
     }
 }
