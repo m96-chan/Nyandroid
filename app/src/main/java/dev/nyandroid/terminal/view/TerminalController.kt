@@ -10,6 +10,7 @@ import dev.nyandroid.terminal.emulator.TerminalEmulator
 import dev.nyandroid.terminal.font.CellMetrics
 import dev.nyandroid.terminal.font.FontSpec
 import dev.nyandroid.terminal.font.GlyphRasterizer
+import dev.nyandroid.terminal.font.NerdFontFamily
 import dev.nyandroid.terminal.render.RenderThread
 import dev.nyandroid.terminal.render.gles.GlesGpuBackend
 
@@ -22,7 +23,8 @@ class TerminalController(context: Context, fontSpec: FontSpec) {
 
     val metrics: CellMetrics = CellMetrics.measure(fontSpec)
 
-    private val rasterizer = GlyphRasterizer(fontSpec, metrics)
+    private val fontFamily = NerdFontFamily.load(context)
+    private val rasterizer = GlyphRasterizer(fontSpec, metrics, fontFamily)
     private val gpu = GlesGpuBackend(rasterizer)
     private val backend: TerminalBackend = SshBackend(context)
     private val emulator = TerminalEmulator(DEFAULT_COLS, DEFAULT_ROWS) { bytes ->

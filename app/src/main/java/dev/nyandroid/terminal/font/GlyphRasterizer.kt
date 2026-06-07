@@ -4,19 +4,19 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Typeface
 
 /**
  * Rasterises individual glyphs into single-channel coverage bitmaps the size of
  * one cell. The GPU backend uploads these into its glyph atlas.
  *
- * This is the only place that touches Android text APIs; everything downstream
- * deals in coverage bytes, mirroring kitty's "rasterise once, cache forever"
- * sprite model.
+ * Uses [NerdFontFamily] for style-specific typefaces (Regular, Bold, Italic,
+ * BoldItalic) so each variant uses the actual font file rather than synthetic
+ * styling.
  */
 class GlyphRasterizer(
     private val spec: FontSpec,
     val metrics: CellMetrics,
+    private val fontFamily: NerdFontFamily? = null,
 ) {
     // Index by style bits: 0 plain, 1 bold, 2 italic, 3 bold-italic.
     private val paints = arrayOfNulls<Paint>(4)
@@ -27,16 +27,21 @@ class GlyphRasterizer(
     private fun paintFor(bold: Boolean, italic: Boolean): Paint {
         val key = (if (bold) 1 else 0) or (if (italic) 2 else 0)
         paints[key]?.let { return it }
-        val style = when {
-            bold && italic -> Typeface.BOLD_ITALIC
-            bold -> Typeface.BOLD
-            italic -> Typeface.ITALIC
-            else -> Typeface.NORMAL
+        val typeface = if (fontFamily != null) {
+            fontFamily.forStyle(bold, italic)
+        } else {
+            val style = when {
+                bold && italic -> android.graphics.Typeface.BOLD_ITALIC
+                bold -> android.graphics.Typeface.BOLD
+                italic -> android.graphics.Typeface.ITALIC
+                else -> android.graphics.Typeface.NORMAL
+            }
+            android.graphics.Typeface.create(spec.typeface, style)
         }
         return Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.create(spec.typeface, style)
+            this.typeface = typeface
             textSize = spec.textSizePx
-            color = Color.WHITE // coverage goes into the ALPHA_8 channel
+            color = Color.WHITE
         }.also { paints[key] = it }
     }
 

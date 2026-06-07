@@ -52,7 +52,7 @@ class TerminalView @JvmOverloads constructor(
 
     init {
         val density = resources.displayMetrics.density
-        val fontSpec = FontSpec(textSizePx = DEFAULT_FONT_SP * density)
+        val fontSpec = FontSpec.create(context, DEFAULT_FONT_SP * density)
         controller = TerminalController(context, fontSpec)
 
         gestureDetector = GestureDetector(context, TerminalGestureListener())
