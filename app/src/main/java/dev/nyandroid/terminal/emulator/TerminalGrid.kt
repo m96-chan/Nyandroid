@@ -96,19 +96,52 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     // --- Printing -----------------------------------------------------------
 
     fun putCodePoint(codePoint: Int) {
+        val width = CharWidth.of(codePoint)
+
+        // Combining character (zero-width): merge with the preceding cell.
+        if (width == 0 && codePoint >= 0x0300) return // TODO: proper combining
+
         if (wrapPending) {
             carriageReturn()
             lineFeed()
         }
-        val i = idx(cursorRow, cursorCol)
-        cp[i] = codePoint
-        fg[i] = penFg
-        bg[i] = penBg
-        fl[i] = penFlags
-        if (cursorCol >= cols - 1) {
-            wrapPending = true
+
+        if (width == 2) {
+            // Wide character needs 2 columns. If at the last column, wrap first.
+            if (cursorCol >= cols - 1) {
+                // Blank the current last column and wrap.
+                val i = idx(cursorRow, cursorCol)
+                cp[i] = ' '.code; fg[i] = penFg; bg[i] = penBg; fl[i] = 0
+                carriageReturn()
+                lineFeed()
+            }
+            val i = idx(cursorRow, cursorCol)
+            cp[i] = codePoint
+            fg[i] = penFg
+            bg[i] = penBg
+            fl[i] = penFlags or WIDE
+            // Right-half dummy cell.
+            val j = idx(cursorRow, cursorCol + 1)
+            cp[j] = WIDE_DUMMY
+            fg[j] = penFg
+            bg[j] = penBg
+            fl[j] = penFlags
+            if (cursorCol >= cols - 2) {
+                wrapPending = true
+            } else {
+                cursorCol += 2
+            }
         } else {
-            cursorCol++
+            val i = idx(cursorRow, cursorCol)
+            cp[i] = codePoint
+            fg[i] = penFg
+            bg[i] = penBg
+            fl[i] = penFlags
+            if (cursorCol >= cols - 1) {
+                wrapPending = true
+            } else {
+                cursorCol++
+            }
         }
     }
 
@@ -655,6 +688,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         const val ITALIC = 4
         const val UNDERLINE = 8
         const val REVERSE = 16
+
+        const val WIDE = 32
+        /** Sentinel codepoint for the right-half cell of a wide character. */
+        const val WIDE_DUMMY = 0
 
         const val SELECTION_FG = 0xFFFFFF
         const val SELECTION_BG = 0x264F78

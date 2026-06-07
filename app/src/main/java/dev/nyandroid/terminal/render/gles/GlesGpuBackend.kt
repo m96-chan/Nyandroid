@@ -87,6 +87,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         bindInstanceAttrib(2, 4, 2, stride) // a_uv (u0,v0,u1,v1)
         bindInstanceAttrib(3, 3, 6, stride) // a_fg
         bindInstanceAttrib(4, 3, 9, stride) // a_bg
+        bindInstanceAttrib(5, 1, 12, stride) // a_cellWidth (1.0 or 2.0)
 
         GLES30.glBindVertexArray(0)
     }
@@ -123,13 +124,18 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         ensureInstanceCapacity(cellCount)
         val data = instanceData
         var p = 0
+        var instanceCount = 0
         for (i in 0 until cellCount) {
+            val cpVal = frame.codePoints[i]
+            if (cpVal == TerminalGrid.WIDE_DUMMY) continue // Skip right-half dummy cells.
+
             val col = i % cols
             val row = i / cols
             val flags = frame.styleFlags[i]
             val bold = flags and TerminalGrid.BOLD != 0
             val italic = flags and TerminalGrid.ITALIC != 0
-            val sprite = atlas.spriteFor(frame.codePoints[i], bold, italic)
+            val isWide = flags and TerminalGrid.WIDE != 0
+            val sprite = atlas.spriteFor(cpVal, bold, italic, wide = isWide)
             val fg = frame.fg[i]
             val bg = frame.bg[i]
 
@@ -145,6 +151,8 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             data[p++] = ((bg shr 16) and 0xFF) / 255f
             data[p++] = ((bg shr 8) and 0xFF) / 255f
             data[p++] = (bg and 0xFF) / 255f
+            data[p++] = if (isWide) 2f else 1f // a_cellWidth
+            instanceCount++
         }
 
         instanceBuffer.clear()
@@ -161,7 +169,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         atlas.bind(0)
 
         GLES30.glBindVertexArray(vao)
-        GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLE_STRIP, 0, 4, cellCount)
+        GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLE_STRIP, 0, 4, instanceCount)
 
         // Draw beam/underline cursor as an additional instance.
         drawNonBlockCursor(frame, program)
@@ -211,7 +219,8 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                 col, row,
                 blankSprite.u0, blankSprite.v0, blankSprite.u1, blankSprite.v1,
                 cr, cg, cb,
-                cr, cg, cb, // bg = cursor color (solid)
+                cr, cg, cb,
+                1f, // a_cellWidth
             )
         } else {
             // Underline: 2px tall bar at bottom of cell.
@@ -220,6 +229,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                 blankSprite.u0, blankSprite.v0, blankSprite.u1, blankSprite.v1,
                 cr, cg, cb,
                 cr, cg, cb,
+                1f, // a_cellWidth
             )
         }
 
@@ -268,7 +278,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
     }
 
     private companion object {
-        const val FLOATS_PER_INSTANCE = 12
+        const val FLOATS_PER_INSTANCE = 13
         const val CURSOR_BLINK_MS = 530L
         const val CURSOR_BEAM_BLINK = 5
 
@@ -279,13 +289,15 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             layout(location = 2) in vec4 a_uv;
             layout(location = 3) in vec3 a_fg;
             layout(location = 4) in vec3 a_bg;
+            layout(location = 5) in float a_cellWidth;
             uniform vec2 u_cellPx;
             uniform vec2 u_viewportPx;
             out vec2 v_uv;
             out vec3 v_fg;
             out vec3 v_bg;
             void main() {
-                vec2 px = (a_gridPos + a_corner) * u_cellPx;
+                vec2 scaledCorner = vec2(a_corner.x * a_cellWidth, a_corner.y);
+                vec2 px = (a_gridPos + scaledCorner) * u_cellPx;
                 vec2 ndc = vec2(
                     px.x / u_viewportPx.x * 2.0 - 1.0,
                     1.0 - px.y / u_viewportPx.y * 2.0

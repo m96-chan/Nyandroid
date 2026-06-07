@@ -30,6 +30,9 @@ class GlyphAtlas(private val rasterizer: GlyphRasterizer) {
 
     private val coverage: ByteBuffer =
         ByteBuffer.allocateDirect(cellW * cellH).order(ByteOrder.nativeOrder())
+    /** Buffer large enough for wide (2-cell) glyphs. */
+    private val wideCoverage: ByteBuffer =
+        ByteBuffer.allocateDirect(cellW * 2 * cellH).order(ByteOrder.nativeOrder())
 
     fun init() {
         val ids = IntArray(1)
@@ -53,36 +56,50 @@ class GlyphAtlas(private val rasterizer: GlyphRasterizer) {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
     }
 
-    fun spriteFor(codePoint: Int, bold: Boolean, italic: Boolean): Sprite {
-        val styleBits = (if (bold) 1 else 0) or (if (italic) 2 else 0)
+    fun spriteFor(codePoint: Int, bold: Boolean, italic: Boolean, wide: Boolean = false): Sprite {
+        val styleBits = (if (bold) 1 else 0) or (if (italic) 2 else 0) or (if (wide) 4 else 0)
         val key = (codePoint.toLong() and 0xFFFFFFFFL) or (styleBits.toLong() shl 40)
         cache[key]?.let { return it }
 
-        if (nextSlot >= capacity) {
-            // Simple eviction for the PoC: start over. Rare for terminal use.
+        val glyphW = if (wide) cellW * 2 else cellW
+        val slotsNeeded = if (wide) 2 else 1
+
+        if (nextSlot + slotsNeeded > capacity) {
             Log.w(TAG, "Glyph atlas full ($capacity slots); clearing cache")
             cache.clear()
             nextSlot = 0
         }
 
-        val slot = nextSlot++
+        val slot = nextSlot
+        nextSlot += slotsNeeded
         val sc = slot % slotsPerRow
         val sr = slot / slotsPerRow
-        val x = sc * cellW
-        val y = sr * cellH
 
-        rasterizer.rasterizeInto(codePoint, bold, italic, coverage)
+        // If wide glyph would overflow the row, move to next row.
+        val x: Int
+        val y: Int
+        if (wide && sc + 2 > slotsPerRow) {
+            // Skip remaining slot in this row.
+            nextSlot = (sr + 1) * slotsPerRow + slotsNeeded
+            x = 0
+            y = (sr + 1) * cellH
+        } else {
+            x = sc * cellW
+            y = sr * cellH
+        }
+
+        rasterizer.rasterizeInto(codePoint, bold, italic, wideCoverage, glyphW)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
         GLES30.glTexSubImage2D(
-            GLES30.GL_TEXTURE_2D, 0, x, y, cellW, cellH,
-            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, coverage,
+            GLES30.GL_TEXTURE_2D, 0, x, y, glyphW, cellH,
+            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, wideCoverage,
         )
 
         val sprite = Sprite(
             x.toFloat() / ATLAS_SIZE,
             y.toFloat() / ATLAS_SIZE,
-            (x + cellW).toFloat() / ATLAS_SIZE,
+            (x + glyphW).toFloat() / ATLAS_SIZE,
             (y + cellH).toFloat() / ATLAS_SIZE,
         )
         cache[key] = sprite

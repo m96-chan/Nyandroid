@@ -46,16 +46,36 @@ class GlyphRasterizer(
     }
 
     /**
-     * Rasterises [codePoint] and copies its coverage into [out], which must be
-     * at least `metrics.width * metrics.height` bytes. Returns the byte count.
+     * Rasterises [codePoint] into [out].
+     *
+     * @param glyphWidth pixel width to rasterize (cellWidth for normal,
+     *   cellWidth*2 for wide/CJK characters).
      */
-    fun rasterizeInto(codePoint: Int, bold: Boolean, italic: Boolean, out: java.nio.ByteBuffer): Int {
-        reusableBitmap.eraseColor(Color.TRANSPARENT)
+    fun rasterizeInto(
+        codePoint: Int, bold: Boolean, italic: Boolean,
+        out: java.nio.ByteBuffer, glyphWidth: Int = metrics.width,
+    ): Int {
+        val bmp = if (glyphWidth == metrics.width) {
+            reusableBitmap
+        } else {
+            ensureWideBitmap(glyphWidth)
+        }
+        bmp.eraseColor(Color.TRANSPARENT)
+        val c = if (glyphWidth == metrics.width) canvas else Canvas(bmp)
         val chars = Character.toChars(codePoint)
-        canvas.drawText(chars, 0, chars.size, 0f, metrics.baseline.toFloat(), paintFor(bold, italic))
+        c.drawText(chars, 0, chars.size, 0f, metrics.baseline.toFloat(), paintFor(bold, italic))
         out.clear()
-        reusableBitmap.copyPixelsToBuffer(out)
+        bmp.copyPixelsToBuffer(out)
         out.flip()
-        return metrics.width * metrics.height
+        return glyphWidth * metrics.height
+    }
+
+    private var wideBitmap: Bitmap? = null
+
+    private fun ensureWideBitmap(width: Int): Bitmap {
+        wideBitmap?.let { if (it.width == width) return it }
+        val bmp = Bitmap.createBitmap(width, metrics.height, Bitmap.Config.ALPHA_8)
+        wideBitmap = bmp
+        return bmp
     }
 }
