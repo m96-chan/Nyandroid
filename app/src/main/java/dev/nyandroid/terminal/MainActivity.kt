@@ -269,7 +269,50 @@ class MainActivity : AppCompatActivity() {
         "show_scrollback" -> {
             searchOverlay.show(); true
         }
+        "load_config" -> {
+            reloadConfig(); true
+        }
         else -> false
+    }
+
+    // --- Config hot-reload (#36) + external display (#41) -------------------
+
+    private fun forEachController(action: (dev.nyandroid.terminal.view.TerminalController) -> Unit) {
+        for (tab in tabManager.getTabs()) {
+            for (ctrl in tab.splitContainer.allControllers()) action(ctrl)
+        }
+    }
+
+    /** Re-reads kitty.conf and applies it to all live panes without restart (#36). */
+    private fun reloadConfig() {
+        config = KittyConfig.load(this)
+        KittyConfig.applyColors(config)
+        currentFontSizePx = (config.fontSize * resources.displayMetrics.density)
+            .coerceIn(MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX)
+        forEachController { ctrl ->
+            ctrl.audioBellEnabled = config.enableAudioBell
+            ctrl.backgroundOpacity = config.backgroundOpacity
+            ctrl.ligaturesEnabled = config.ligaturesEnabled
+            ctrl.shellIntegrationEnabled = config.shellIntegration == "enabled"
+            ctrl.setFontSize(currentFontSizePx)
+        }
+        activeTerminalView?.keyBindings = config.keyBindings
+        tabBar.rebuild()
+    }
+
+    private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            // Re-scale fonts for the (possibly external) display's density (#41).
+            reloadConfig()
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // OS light/dark switch (#36) + density change on display move (#41).
+        reloadConfig()
     }
 
     /** Briefly flashes the screen for a visual bell (#21). */
@@ -288,6 +331,18 @@ class MainActivity : AppCompatActivity() {
             container.leafContaining(focused)?.let { return it }
         }
         return container.firstLeaf()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val dm = getSystemService(DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        dm.registerDisplayListener(displayListener, null)
+    }
+
+    override fun onStop() {
+        val dm = getSystemService(DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        dm.unregisterDisplayListener(displayListener)
+        super.onStop()
     }
 
     override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
