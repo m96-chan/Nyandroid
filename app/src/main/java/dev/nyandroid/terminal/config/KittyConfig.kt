@@ -140,6 +140,7 @@ class KittyConfig private constructor(
             map ctrl+shift+l next_layout
             map ctrl+shift+z scroll_to_prompt
             map ctrl+shift+slash show_scrollback
+            map ctrl+shift+f5 load_config
         """.trimIndent())
     }
 }
