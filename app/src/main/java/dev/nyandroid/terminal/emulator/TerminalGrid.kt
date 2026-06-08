@@ -26,6 +26,44 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     private var bg = IntArray(cp.size)
     private var fl = IntArray(cp.size)
 
+    /** Per-cell underline colour (`-1` = use foreground). SGR 58/59. */
+    private var ulc = IntArray(cp.size) { -1 }
+
+    /** Per-cell combining mark codepoint (`0` = none). */
+    private var comb = IntArray(cp.size)
+
+    /** Per-cell OSC 8 hyperlink id (`0` = none); resolved via [linkUrls]. */
+    private var link = IntArray(cp.size)
+
+    /** Maps hyperlink id -> URL for OSC 8 links. */
+    private val linkUrls = HashMap<Int, String>()
+    private var nextLinkId = 1
+    private var penLink = 0
+    private var penUlc = -1
+
+    /**
+     * DECSET 2026 synchronized-update state. While true the emulator defers
+     * notifying the renderer so a multi-write screen update is shown atomically.
+     */
+    var synchronizedUpdate = false
+        private set
+
+    // Dirty-row tracking for partial GPU re-upload. Inclusive row range that
+    // changed since the last snapshot; (-1,-1) means "nothing dirty".
+    private var dirtyTop = 0
+    private var dirtyBottom = this.rows - 1
+    private var prevCursorRow = 0
+
+    private fun markDirty(row: Int) {
+        if (row < dirtyTop) dirtyTop = row
+        if (row > dirtyBottom) dirtyBottom = row
+    }
+
+    private fun markAllDirty() {
+        dirtyTop = 0
+        dirtyBottom = rows - 1
+    }
+
     /** Scrollback history for the primary screen. */
     var scrollback = ScrollbackBuffer(scrollbackLines, this.cols)
         private set
@@ -182,6 +220,9 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     private var altSavedFg: IntArray? = null
     private var altSavedBg: IntArray? = null
     private var altSavedFl: IntArray? = null
+    private var altSavedUlc: IntArray? = null
+    private var altSavedComb: IntArray? = null
+    private var altSavedLink: IntArray? = null
     private var altSavedCursorRow = 0
     private var altSavedCursorCol = 0
 
@@ -196,6 +237,9 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         fg[i] = penFg
         bg[i] = background
         fl[i] = 0
+        ulc[i] = -1
+        comb[i] = 0
+        link[i] = 0
     }
 
     private fun clearAll() {
@@ -204,7 +248,11 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             fg[i] = TerminalColors.DEFAULT_FG
             bg[i] = TerminalColors.DEFAULT_BG
             fl[i] = 0
+            ulc[i] = -1
+            comb[i] = 0
+            link[i] = 0
         }
+        markAllDirty()
     }
 
     // --- Printing -----------------------------------------------------------
@@ -212,51 +260,62 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
     fun putCodePoint(codePoint: Int) {
         val width = CharWidth.of(codePoint)
 
-        // Combining character (zero-width): merge with the preceding cell.
-        if (width == 0 && codePoint >= 0x0300) return // TODO: proper combining
+        // Combining character (zero-width): compose onto the preceding cell so
+        // diacritics (e.g. "e" + U+0301) render as a single grapheme.
+        if (width == 0 && codePoint >= 0x0300) {
+            val target = when {
+                wrapPending -> idx(cursorRow, cols - 1)
+                cursorCol > 0 -> idx(cursorRow, cursorCol - 1)
+                else -> return
+            }
+            // Stack onto an existing combining mark slot if free; otherwise keep
+            // the first (single-mark cells cover the overwhelmingly common case).
+            if (comb[target] == 0) comb[target] = codePoint
+            markDirty(target / cols)
+            return
+        }
 
         if (wrapPending) {
             carriageReturn()
             lineFeed()
         }
+        markDirty(cursorRow)
 
         if (width == 2) {
             // Wide character needs 2 columns. If at the last column, wrap first.
             if (cursorCol >= cols - 1) {
-                // Blank the current last column and wrap.
-                val i = idx(cursorRow, cursorCol)
-                cp[i] = ' '.code; fg[i] = penFg; bg[i] = penBg; fl[i] = 0
+                blank(idx(cursorRow, cursorCol))
                 carriageReturn()
                 lineFeed()
+                markDirty(cursorRow)
             }
             val i = idx(cursorRow, cursorCol)
-            cp[i] = codePoint
-            fg[i] = penFg
-            bg[i] = penBg
-            fl[i] = penFlags or WIDE
+            writeCell(i, codePoint, penFlags or WIDE)
             // Right-half dummy cell.
-            val j = idx(cursorRow, cursorCol + 1)
-            cp[j] = WIDE_DUMMY
-            fg[j] = penFg
-            bg[j] = penBg
-            fl[j] = penFlags
+            writeCell(idx(cursorRow, cursorCol + 1), WIDE_DUMMY, penFlags)
             if (cursorCol >= cols - 2) {
                 wrapPending = true
             } else {
                 cursorCol += 2
             }
         } else {
-            val i = idx(cursorRow, cursorCol)
-            cp[i] = codePoint
-            fg[i] = penFg
-            bg[i] = penBg
-            fl[i] = penFlags
+            writeCell(idx(cursorRow, cursorCol), codePoint, penFlags)
             if (cursorCol >= cols - 1) {
                 wrapPending = true
             } else {
                 cursorCol++
             }
         }
+    }
+
+    private fun writeCell(i: Int, codePoint: Int, flags: Int) {
+        cp[i] = codePoint
+        fg[i] = penFg
+        bg[i] = penBg
+        fl[i] = flags
+        ulc[i] = penUlc
+        comb[i] = 0
+        link[i] = penLink
     }
 
     // --- Cursor motion ------------------------------------------------------
@@ -354,27 +413,29 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             }
         }
         for (row in scrollTop..(scrollBottom - count)) {
-            val src = idx(row + count, 0)
-            val dst = idx(row, 0)
-            System.arraycopy(cp, src, cp, dst, cols)
-            System.arraycopy(fg, src, fg, dst, cols)
-            System.arraycopy(bg, src, bg, dst, cols)
-            System.arraycopy(fl, src, fl, dst, cols)
+            copyRow(idx(row + count, 0), idx(row, 0))
         }
         for (row in (scrollBottom - count + 1)..scrollBottom) blankRow(row)
+        markAllDirty()
     }
 
     fun scrollDown(n: Int) {
         val count = n.coerceIn(1, scrollBottom - scrollTop + 1)
         for (row in scrollBottom downTo (scrollTop + count)) {
-            val src = idx(row - count, 0)
-            val dst = idx(row, 0)
-            System.arraycopy(cp, src, cp, dst, cols)
-            System.arraycopy(fg, src, fg, dst, cols)
-            System.arraycopy(bg, src, bg, dst, cols)
-            System.arraycopy(fl, src, fl, dst, cols)
+            copyRow(idx(row - count, 0), idx(row, 0))
         }
         for (row in scrollTop until (scrollTop + count)) blankRow(row)
+        markAllDirty()
+    }
+
+    private fun copyRow(src: Int, dst: Int) {
+        System.arraycopy(cp, src, cp, dst, cols)
+        System.arraycopy(fg, src, fg, dst, cols)
+        System.arraycopy(bg, src, bg, dst, cols)
+        System.arraycopy(fl, src, fl, dst, cols)
+        System.arraycopy(ulc, src, ulc, dst, cols)
+        System.arraycopy(comb, src, comb, dst, cols)
+        System.arraycopy(link, src, link, dst, cols)
     }
 
     private fun blankRow(row: Int) {
@@ -442,6 +503,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         System.arraycopy(fg, src, fg, dst, len)
         System.arraycopy(bg, src, bg, dst, len)
         System.arraycopy(fl, src, fl, dst, len)
+        System.arraycopy(ulc, src, ulc, dst, len)
+        System.arraycopy(comb, src, comb, dst, len)
+        System.arraycopy(link, src, link, dst, len)
+        markAllDirty()
     }
 
     fun insertLines(n: Int) {
@@ -472,10 +537,17 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         penFg = TerminalColors.DEFAULT_FG
         penBg = TerminalColors.DEFAULT_BG
         penFlags = 0
+        penUlc = -1
     }
 
-    /** Applies an SGR sequence; [params] holds [count] decoded numeric params. */
-    fun applySgr(params: IntArray, count: Int) {
+    private val ALL_UNDERLINES = UNDERLINE or DOUBLE_UNDERLINE or CURLY_UNDERLINE or
+        DOTTED_UNDERLINE or DASHED_UNDERLINE
+
+    /**
+     * Applies an SGR sequence. [paramIsSub] marks params that were colon-joined
+     * to the previous one (e.g. `4:3` underline-style, `58:2:r:g:b`).
+     */
+    fun applySgr(params: IntArray, paramIsSub: BooleanArray, count: Int) {
         if (count == 0) {
             resetPen()
             return
@@ -487,13 +559,21 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 1 -> penFlags = penFlags or BOLD
                 2 -> penFlags = penFlags or DIM
                 3 -> penFlags = penFlags or ITALIC
-                4 -> penFlags = penFlags or UNDERLINE
+                4 -> {
+                    // 4 with a colon sub-param selects the underline style.
+                    if (i + 1 < count && paramIsSub[i + 1]) {
+                        penFlags = penFlags and ALL_UNDERLINES.inv() or underlineStyleFlag(params[i + 1])
+                        i++
+                    } else {
+                        penFlags = penFlags and ALL_UNDERLINES.inv() or UNDERLINE
+                    }
+                }
                 7 -> penFlags = penFlags or REVERSE
                 9 -> penFlags = penFlags or STRIKETHROUGH
-                21 -> penFlags = penFlags or DOUBLE_UNDERLINE
+                21 -> penFlags = penFlags and ALL_UNDERLINES.inv() or DOUBLE_UNDERLINE
                 22 -> penFlags = penFlags and (BOLD or DIM).inv()
                 23 -> penFlags = penFlags and ITALIC.inv()
-                24 -> penFlags = penFlags and (UNDERLINE or DOUBLE_UNDERLINE or CURLY_UNDERLINE).inv()
+                24 -> penFlags = penFlags and ALL_UNDERLINES.inv()
                 27 -> penFlags = penFlags and REVERSE.inv()
                 29 -> penFlags = penFlags and STRIKETHROUGH.inv()
                 53 -> penFlags = penFlags or OVERLINE
@@ -506,9 +586,20 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 49 -> penBg = TerminalColors.DEFAULT_BG
                 38 -> i = consumeExtendedColor(params, count, i) { penFg = it }
                 48 -> i = consumeExtendedColor(params, count, i) { penBg = it }
+                58 -> i = consumeExtendedColor(params, count, i) { penUlc = it }
+                59 -> penUlc = -1
             }
             i++
         }
+    }
+
+    private fun underlineStyleFlag(style: Int): Int = when (style) {
+        0 -> 0                  // none
+        2 -> DOUBLE_UNDERLINE
+        3 -> CURLY_UNDERLINE
+        4 -> DOTTED_UNDERLINE
+        5 -> DASHED_UNDERLINE
+        else -> UNDERLINE       // 1 (and unknown) = single
     }
 
     /** Handles `38;5;n` / `38;2;r;g;b`; returns the index of the last param used. */
@@ -560,6 +651,9 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             altSavedFg = fg.copyOf()
             altSavedBg = bg.copyOf()
             altSavedFl = fl.copyOf()
+            altSavedUlc = ulc.copyOf()
+            altSavedComb = comb.copyOf()
+            altSavedLink = link.copyOf()
             altSavedCursorRow = cursorRow
             altSavedCursorCol = cursorCol
             clearAll()
@@ -570,14 +664,19 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             altSavedFg?.let { System.arraycopy(it, 0, fg, 0, fg.size) }
             altSavedBg?.let { System.arraycopy(it, 0, bg, 0, bg.size) }
             altSavedFl?.let { System.arraycopy(it, 0, fl, 0, fl.size) }
+            altSavedUlc?.let { System.arraycopy(it, 0, ulc, 0, ulc.size) }
+            altSavedComb?.let { System.arraycopy(it, 0, comb, 0, comb.size) }
+            altSavedLink?.let { System.arraycopy(it, 0, link, 0, link.size) }
             cursorRow = altSavedCursorRow.coerceIn(0, rows - 1)
             cursorCol = altSavedCursorCol.coerceIn(0, cols - 1)
             altSavedCp = null; altSavedFg = null; altSavedBg = null; altSavedFl = null
+            altSavedUlc = null; altSavedComb = null; altSavedLink = null
         }
         onAltScreen = on
         scrollTop = 0
         scrollBottom = rows - 1
         wrapPending = false
+        markAllDirty()
     }
 
     fun fullReset() {
@@ -596,6 +695,11 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         applicationKeypad = false
         mouseTrackingMode = MOUSE_NONE
         mouseSgrFormat = false
+        synchronizedUpdate = false
+        penLink = 0
+        penUlc = -1
+        linkUrls.clear()
+        nextLinkId = 1
         scrollback.clear()
     }
 
@@ -610,6 +714,9 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         val newFg = IntArray(newCp.size)
         val newBg = IntArray(newCp.size)
         val newFl = IntArray(newCp.size)
+        val newUlc = IntArray(newCp.size) { -1 }
+        val newComb = IntArray(newCp.size)
+        val newLink = IntArray(newCp.size)
         for (i in newCp.indices) {
             newCp[i] = ' '.code
             newFg[i] = TerminalColors.DEFAULT_FG
@@ -624,9 +731,13 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             System.arraycopy(fg, srcStart, newFg, dstStart, copyCols)
             System.arraycopy(bg, srcStart, newBg, dstStart, copyCols)
             System.arraycopy(fl, srcStart, newFl, dstStart, copyCols)
+            System.arraycopy(ulc, srcStart, newUlc, dstStart, copyCols)
+            System.arraycopy(comb, srcStart, newComb, dstStart, copyCols)
+            System.arraycopy(link, srcStart, newLink, dstStart, copyCols)
         }
 
         cp = newCp; fg = newFg; bg = newBg; fl = newFl
+        ulc = newUlc; comb = newComb; link = newLink
         cols = nc; rows = nr
         scrollTop = 0
         scrollBottom = rows - 1
@@ -637,6 +748,7 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         altSavedCp = null; altSavedFg = null; altSavedBg = null; altSavedFl = null
         onAltScreen = false
         scrollback = scrollback.resize(nc)
+        markAllDirty()
     }
 
     // --- Snapshot -----------------------------------------------------------
@@ -654,7 +766,26 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         val of = out.fg
         val ob = out.bg
         val os = out.styleFlags
+        val ou = out.underlineColor
+        val om = out.combining
         val total = cols * rows
+
+        // Publish the dirty range (cell mutations + old/new cursor rows), then
+        // reset it. Scrollback / selection force a full upload in the emulator.
+        if (viewportOffset > 0) {
+            out.dirtyTop = 0; out.dirtyBottom = rows - 1
+        } else {
+            var dt = dirtyTop; var db = dirtyBottom
+            val cr = if (cursorVisible) cursorRow else prevCursorRow
+            dt = minOf(dt, prevCursorRow, cr).coerceIn(0, rows - 1)
+            db = maxOf(db, prevCursorRow, cr).coerceIn(0, rows - 1)
+            if (dirtyBottom < dirtyTop) { // only cursor moved
+                dt = minOf(prevCursorRow, cr); db = maxOf(prevCursorRow, cr)
+            }
+            out.dirtyTop = dt; out.dirtyBottom = db
+        }
+        dirtyTop = rows; dirtyBottom = -1
+        prevCursorRow = if (cursorVisible) cursorRow else prevCursorRow
 
         if (viewportOffset <= 0) {
             // Fast path: copy screen directly.
@@ -662,6 +793,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
             System.arraycopy(fg, 0, of, 0, total)
             System.arraycopy(bg, 0, ob, 0, total)
             System.arraycopy(fl, 0, os, 0, total)
+            System.arraycopy(ulc, 0, ou, 0, total)
+            System.arraycopy(comb, 0, om, 0, total)
         } else {
             // Compose from scrollback (top) + screen (bottom).
             val scrollbackRows = minOf(viewportOffset, rows)
@@ -674,6 +807,11 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 } else {
                     blankSnapshotRow(oc, of, ob, os, r * cols)
                 }
+                // Scrollback has no underline-colour/combining history.
+                for (c in 0 until cols) {
+                    ou[r * cols + c] = -1
+                    om[r * cols + c] = 0
+                }
             }
             if (screenRows > 0) {
                 val dstOff = scrollbackRows * cols
@@ -681,6 +819,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                 System.arraycopy(fg, 0, of, dstOff, screenRows * cols)
                 System.arraycopy(bg, 0, ob, dstOff, screenRows * cols)
                 System.arraycopy(fl, 0, os, dstOff, screenRows * cols)
+                System.arraycopy(ulc, 0, ou, dstOff, screenRows * cols)
+                System.arraycopy(comb, 0, om, dstOff, screenRows * cols)
             }
         }
 
@@ -738,6 +878,31 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
 
     fun setMouseSgrFormat(enable: Boolean) {
         mouseSgrFormat = enable
+    }
+
+    /** DECSET 2026 synchronized output. */
+    fun setSynchronizedUpdate(enable: Boolean) {
+        synchronizedUpdate = enable
+    }
+
+    // --- OSC 8 hyperlinks ----------------------------------------------------
+
+    /** Sets the pen hyperlink (OSC 8). Empty/blank [url] clears it. */
+    fun setHyperlink(url: String?) {
+        penLink = if (url.isNullOrEmpty()) {
+            0
+        } else {
+            val id = nextLinkId++
+            linkUrls[id] = url
+            id
+        }
+    }
+
+    /** Returns the OSC 8 hyperlink URL at the given live-screen cell, if any. */
+    fun hyperlinkAt(row: Int, col: Int): String? {
+        if (row !in 0 until rows || col !in 0 until cols) return null
+        val id = link[idx(row, col)]
+        return if (id == 0) null else linkUrls[id]
     }
 
     // --- Selection -----------------------------------------------------------
@@ -833,6 +998,8 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         const val OVERLINE = 128
         const val DOUBLE_UNDERLINE = 256
         const val CURLY_UNDERLINE = 512
+        const val DOTTED_UNDERLINE = 1024
+        const val DASHED_UNDERLINE = 2048
         /** Sentinel codepoint for the right-half cell of a wide character. */
         const val WIDE_DUMMY = 0
 

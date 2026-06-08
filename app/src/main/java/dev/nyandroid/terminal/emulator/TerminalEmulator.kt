@@ -32,20 +32,34 @@ class TerminalEmulator(
     /** Invoked on BEL (terminal bell). */
     var onBell: (() -> Unit)? = null
 
+    /** Invoked for OSC 99/777 notifications: (oscCode, payload). */
+    var onNotification: ((Int, String) -> Unit)? = null
+
     init {
         parser.onBell = { onBell?.invoke() }
+        parser.onNotification = { code, payload -> onNotification?.invoke(code, payload) }
     }
+
+    /** Active kitty keyboard-protocol flags (0 = legacy encoding). */
+    fun kittyKeyboardFlags(): Int = synchronized(lock) { grid.kittyKeyboardFlags }
+
+    /** Row of the most recent shell-integration prompt mark, or -1. */
+    fun promptRow(): Int = synchronized(lock) { grid.promptStartRow }
 
     val cols: Int get() = synchronized(lock) { grid.cols }
     val rows: Int get() = synchronized(lock) { grid.rows }
 
     fun feed(data: ByteArray, length: Int) {
+        val notify: Boolean
         synchronized(lock) {
             parser.parse(data, length)
             viewportOffset = 0 // Auto-scroll to bottom on new output.
             revision++
+            // DECSET 2026: hold rendering until the app ends the synchronized
+            // update, so a multi-write screen refresh is shown atomically.
+            notify = !grid.synchronizedUpdate
         }
-        onChange?.invoke()
+        if (notify) onChange?.invoke()
     }
 
     fun resize(cols: Int, rows: Int) {
@@ -63,7 +77,8 @@ class TerminalEmulator(
      */
     fun snapshot(out: FrameSnapshot): Long = synchronized(lock) {
         grid.snapshotInto(out, viewportOffset)
-        // Apply selection highlight if active and viewport matches.
+        // Apply selection highlight if active and viewport matches. A selection
+        // can touch any row, so force a full upload while one is present.
         selection?.let { sel ->
             if (sel.viewportOffset == viewportOffset) {
                 grid.applySelectionHighlight(
@@ -71,6 +86,13 @@ class TerminalEmulator(
                     sel.startRow, sel.startCol, sel.endRow, sel.endCol,
                 )
             }
+            out.dirtyTop = 0
+            out.dirtyBottom = out.rows - 1
+        }
+        out.graphics = if (grid.graphicsPlacements.isEmpty()) {
+            emptyList()
+        } else {
+            grid.graphicsPlacements.toList()
         }
         out.markUpdated(revision)
         revision
@@ -123,6 +145,11 @@ class TerminalEmulator(
 
     fun getLineText(row: Int): String? = synchronized(lock) {
         grid.getTextInRange(row, 0, row, grid.cols - 1, viewportOffset)
+    }
+
+    /** OSC 8 hyperlink at the given live-screen cell (only when not scrolled). */
+    fun hyperlinkAt(row: Int, col: Int): String? = synchronized(lock) {
+        if (viewportOffset != 0) null else grid.hyperlinkAt(row, col)
     }
 
     fun isBracketedPasteMode(): Boolean = synchronized(lock) { grid.bracketedPasteMode }

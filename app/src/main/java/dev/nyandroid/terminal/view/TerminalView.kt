@@ -70,6 +70,9 @@ class TerminalView @JvmOverloads constructor(
     /** Callback for font size changes via pinch zoom. */
     var onFontSizeChanged: ((Float) -> Unit)? = null
 
+    /** Invoked on the UI thread when the terminal rings a visual bell (#21). */
+    var onVisualBell: (() -> Unit)? = null
+
     init {
         gestureDetector = GestureDetector(context, TerminalGestureListener())
         gestureDetector.setIsLongpressEnabled(false) // We handle long-press ourselves.
@@ -93,6 +96,8 @@ class TerminalView @JvmOverloads constructor(
             controller.onSurfaceDestroyed()
         }
         controller = newController
+        // Visual bell fires on the feed thread; hop to the UI thread.
+        newController.onVisualBell = { handler.post { onVisualBell?.invoke() } }
         // Reattach to current surface if available.
         pendingSurface?.let { (surface, w, h) ->
             newController.onSurfaceAvailable(surface, w, h)
@@ -161,6 +166,7 @@ class TerminalView @JvmOverloads constructor(
             virtualCtrl = virtualCtrl,
             virtualAlt = virtualAlt,
             virtualFn = virtualFn,
+            kittyFlags = controller.kittyKeyboardFlags(),
         )
         // Clear sticky modifiers after use.
         if (bytes != null) {
@@ -430,6 +436,7 @@ class TerminalView @JvmOverloads constructor(
             virtualCtrl = virtualCtrl,
             virtualAlt = virtualAlt,
             virtualFn = virtualFn,
+            kittyFlags = controller.kittyKeyboardFlags(),
         )?.let {
             controller.write(it)
             virtualCtrl = false
@@ -449,6 +456,14 @@ class TerminalView @JvmOverloads constructor(
         // Controller lifecycle is managed by TabManager, not here.
     }
 
+    /** Makes the surface translucent so background opacity (#22) shows through. */
+    fun setBackgroundTranslucent(translucent: Boolean) {
+        if (translucent) {
+            setZOrderOnTop(true)
+            holder.setFormat(android.graphics.PixelFormat.TRANSLUCENT)
+        }
+    }
+
     // --- Gesture listener ---------------------------------------------------
 
     private inner class TerminalGestureListener : GestureDetector.SimpleOnGestureListener() {
@@ -458,6 +473,13 @@ class TerminalView @JvmOverloads constructor(
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             if (actionMode != null) {
                 dismissSelection()
+                return true
+            }
+            // Tap on a URL (OSC 8 hyperlink or detected) opens it (#16).
+            val (row, col) = touchToCell(e.x, e.y)
+            val url = controller.hyperlinkAt(row, col) ?: controller.urlAt(row, col)
+            if (url != null) {
+                UrlDetector.openUrl(context, url)
                 return true
             }
             requestFocus()
@@ -523,12 +545,14 @@ class TerminalView @JvmOverloads constructor(
 
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             scaling = true
-            startFontSize = controller.metrics.height.toFloat()
+            startFontSize = controller.fontSizePx
             return true
         }
 
         override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val newSize = startFontSize * detector.scaleFactor
+            val newSize = (startFontSize * detector.scaleFactor).coerceIn(MIN_FONT_PX, MAX_FONT_PX)
+            // Apply live so the grid re-lays out immediately (#6).
+            controller.setFontSize(newSize)
             onFontSizeChanged?.invoke(newSize)
             return true
         }
@@ -592,5 +616,7 @@ class TerminalView @JvmOverloads constructor(
         const val DEFAULT_FONT_SP = 14f
         const val MENU_COPY = 1
         const val MENU_PASTE = 2
+        const val MIN_FONT_PX = 16f
+        const val MAX_FONT_PX = 80f
     }
 }

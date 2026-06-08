@@ -38,10 +38,17 @@ object KeyEncoder {
         virtualCtrl: Boolean = false,
         virtualAlt: Boolean = false,
         virtualFn: Boolean = false,
+        kittyFlags: Int = 0,
     ): ByteArray? {
         val ctrl = event.isCtrlPressed || virtualCtrl
         val alt = event.isAltPressed || virtualAlt
         val shift = event.isShiftPressed
+
+        // kitty keyboard protocol (progressive enhancement) takes precedence
+        // when the application has enabled it.
+        if (kittyFlags != 0) {
+            encodeKitty(event, kittyFlags, ctrl, alt, shift)?.let { return it }
+        }
 
         // Fn mode: number row → F1-F12.
         if (virtualFn) {
@@ -103,6 +110,44 @@ object KeyEncoder {
             return maybeAltWrap(alt, text)
         }
         return null
+    }
+
+    // --- kitty keyboard protocol (CSI u) -------------------------------------
+
+    /**
+     * Encodes a key as `CSI number ; modifiers u` per the kitty keyboard
+     * protocol. Returns null for keys this layer leaves to the legacy encoder
+     * (cursor / function keys) or plain unmodified text (unless "report all
+     * keys", flag 8, is set).
+     *
+     * Flags: 1=disambiguate, 2=report event types, 8=report all keys as escape
+     * codes, 16=report associated text.
+     */
+    private fun encodeKitty(
+        event: KeyEvent, flags: Int, ctrl: Boolean, alt: Boolean, shift: Boolean,
+    ): ByteArray? {
+        val reportAll = flags and 0x8 != 0
+        val mods = 1 + (if (shift) 1 else 0) + (if (alt) 2 else 0) + (if (ctrl) 4 else 0)
+
+        val keyNum = when (event.keyCode) {
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> 13
+            KeyEvent.KEYCODE_TAB -> 9
+            KeyEvent.KEYCODE_DEL -> 127
+            KeyEvent.KEYCODE_ESCAPE -> 27
+            KeyEvent.KEYCODE_SPACE -> 32
+            else -> {
+                val u = event.getUnicodeChar(0) // base-layout codepoint, no meta
+                if (u == 0) return null         // functional key → legacy encoder
+                u
+            }
+        }
+
+        // Plain printable with no modifiers is sent as text unless the app asked
+        // for all keys as escape codes.
+        if (!reportAll && mods == 1 && keyNum >= 32 && keyNum != 127) return null
+
+        val body = if (mods > 1) "$keyNum;${mods}u" else "${keyNum}u"
+        return "\u001B[$body".toByteArray(StandardCharsets.US_ASCII)
     }
 
     // --- Cursor keys (DECCKM-aware) ------------------------------------------

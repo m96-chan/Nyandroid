@@ -144,4 +144,28 @@ class GlyphRasterizer(
         wideBitmap = bmp
         return bmp
     }
+
+    // --- Colour glyphs (emoji) ----------------------------------------------
+
+    private var colorPaint: Paint? = null
+
+    /**
+     * Rasterises a colour glyph (emoji) into a fresh ARGB_8888 bitmap spanning
+     * [widthCells] cells. The system emoji font (via [android.graphics.Typeface.DEFAULT])
+     * supplies colour glyphs; the single-channel atlas can't hold these, so the
+     * GPU backend uploads the result as an RGBA texture.
+     */
+    fun rasterizeColorBitmap(codePoint: Int, widthCells: Int): Bitmap {
+        val w = (metrics.width * widthCells).coerceAtLeast(1)
+        val h = metrics.height
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val paint = colorPaint ?: Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.DEFAULT
+            textSize = spec.textSizePx
+        }.also { colorPaint = it }
+        val chars = Character.toChars(codePoint)
+        c.drawText(chars, 0, chars.size, 0f, metrics.baseline.toFloat(), paint)
+        return bmp
+    }
 }
