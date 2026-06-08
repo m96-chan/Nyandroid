@@ -106,6 +106,52 @@ class GlyphAtlas(private val rasterizer: GlyphRasterizer) {
         return sprite
     }
 
+    /**
+     * Returns a sprite for a ligature rendered across [cellCount] cells.
+     * Allocates [cellCount] consecutive atlas slots within one row.
+     */
+    fun ligatureSprite(codePoints: IntArray, bold: Boolean, italic: Boolean, cellCount: Int): Sprite {
+        val styleBits = (if (bold) 1 else 0) or (if (italic) 2 else 0)
+        var h = 1125899906842597L // FNV-ish seed
+        for (cpv in codePoints) h = h * 31 + cpv
+        h = h * 31 + styleBits + cellCount.toLong() * 1000003
+        val key = (h and 0x0FFFFFFFFFFFFFFFL) or (1L shl 62) // mark as ligature
+        cache[key]?.let { return it }
+
+        val glyphW = cellW * cellCount
+        if (nextSlot + cellCount > capacity) {
+            cache.clear(); nextSlot = 0
+        }
+        var slot = nextSlot
+        var sc = slot % slotsPerRow
+        var sr = slot / slotsPerRow
+        if (sc + cellCount > slotsPerRow) { // keep the run within one row
+            sr += 1; sc = 0; slot = sr * slotsPerRow
+        }
+        nextSlot = slot + cellCount
+        val x = sc * cellW
+        val y = sr * cellH
+        if (y + cellH > ATLAS_SIZE) { // overflow guard
+            cache.clear(); nextSlot = 0
+            return ligatureSprite(codePoints, bold, italic, cellCount)
+        }
+
+        val buf = ByteBuffer.allocateDirect(glyphW * cellH).order(ByteOrder.nativeOrder())
+        rasterizer.rasterizeLigatureInto(codePoints, bold, italic, buf, cellCount)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
+        GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+        GLES30.glTexSubImage2D(
+            GLES30.GL_TEXTURE_2D, 0, x, y, glyphW, cellH,
+            GLES30.GL_RED, GLES30.GL_UNSIGNED_BYTE, buf,
+        )
+        val sprite = Sprite(
+            x.toFloat() / ATLAS_SIZE, y.toFloat() / ATLAS_SIZE,
+            (x + glyphW).toFloat() / ATLAS_SIZE, (y + cellH).toFloat() / ATLAS_SIZE,
+        )
+        cache[key] = sprite
+        return sprite
+    }
+
     fun release() {
         if (textureId != 0) {
             GLES30.glDeleteTextures(1, intArrayOf(textureId), 0)
