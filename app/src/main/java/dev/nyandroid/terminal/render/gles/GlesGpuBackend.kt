@@ -175,6 +175,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         bindInstanceAttrib(5, 1, 12, stride)  // a_cellWidth
         bindInstanceAttrib(6, 1, 13, stride)  // a_deco
         bindInstanceAttrib(7, 3, 14, stride)  // a_ulColor
+        bindInstanceAttrib(8, 1, 17, stride)  // a_box
         GLES30.glBindVertexArray(0)
     }
 
@@ -306,6 +307,12 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                 if (c + 1 < cols) rowCovered[c + 1] = true
                 c += 2; continue
             }
+            // Box-drawing / block elements: render procedurally, not via atlas (#32).
+            val box = BoxGlyphs.codeFor(cpv)
+            if (box != 0) {
+                writeInstance(base, c, row, 1, blank, fg, bg, deco, ul, box)
+                c++; continue
+            }
             if (ligaturesEnabled && cpv in 0x21..0x7E) {
                 val runLen = Ligatures.matchAt(frame.codePoints, i, rowEnd)
                 if (runLen >= 2 && uniformRun(frame, i, runLen, flags, fg)) {
@@ -331,7 +338,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
 
     private fun writeInstance(
         base: Int, col: Int, row: Int, cellWidth: Int,
-        sprite: GlyphAtlas.Sprite, fg: Int, bg: Int, deco: Float, ul: Int,
+        sprite: GlyphAtlas.Sprite, fg: Int, bg: Int, deco: Float, ul: Int, box: Int = 0,
     ) {
         val d = instanceData
         d[base] = col.toFloat()
@@ -349,6 +356,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
         d[base + 14] = ((ul shr 16) and 0xFF) / 255f
         d[base + 15] = ((ul shr 8) and 0xFF) / 255f
         d[base + 16] = (ul and 0xFF) / 255f
+        d[base + 17] = box.toFloat()
     }
 
     /** Zero-area instance (cellWidth 0) so a covered cell draws nothing. */
@@ -377,7 +385,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
 
         val cursorData = floatArrayOf(
             col, row, blank.u0, blank.v0, blank.u1, blank.v1,
-            cr, cg, cb, cr, cg, cb, 1f, 0f, cr, cg, cb,
+            cr, cg, cb, cr, cg, cb, 1f, 0f, cr, cg, cb, 0f,
         )
 
         GLES30.glEnable(GLES30.GL_SCISSOR_TEST)
@@ -514,7 +522,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
     }
 
     private companion object {
-        const val FLOATS_PER_INSTANCE = 17
+        const val FLOATS_PER_INSTANCE = 18
         const val CURSOR_BLINK_MS = 530L
 
         // Decoration bits we forward to the shader (must match TerminalGrid).
@@ -536,6 +544,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             layout(location = 5) in float a_cellWidth;
             layout(location = 6) in float a_deco;
             layout(location = 7) in vec3 a_ulColor;
+            layout(location = 8) in float a_box;
             uniform vec2 u_cellPx;
             uniform vec2 u_viewportPx;
             out vec2 v_uv;
@@ -545,6 +554,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             flat out int v_deco;
             out vec3 v_ulColor;
             out float v_cellW;
+            flat out int v_box;
             void main() {
                 vec2 scaledCorner = vec2(a_corner.x * a_cellWidth, a_corner.y);
                 vec2 px = (a_gridPos + scaledCorner) * u_cellPx;
@@ -558,6 +568,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                 v_deco = int(a_deco + 0.5);
                 v_ulColor = a_ulColor;
                 v_cellW = a_cellWidth;
+                v_box = int(a_box + 0.5);
             }
         """.trimIndent()
 
@@ -571,6 +582,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             flat in int v_deco;
             in vec3 v_ulColor;
             in float v_cellW;
+            flat in int v_box;
             uniform sampler2D u_atlas;
             uniform vec2 u_cellPx;
             uniform float u_bgOpacity;
@@ -584,8 +596,42 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
             const int DOTTED_UL = 1024;
             const int DASHED_UL = 2048;
 
+            // Procedural box-drawing / block-element coverage (#32).
+            float boxCoverage(int box, vec2 local, vec2 cellPx, float cellW) {
+                float w = cellPx.x * max(cellW, 1.0);
+                float h = cellPx.y;
+                float px = local.x * w;
+                float py = local.y * h;
+                float cx = w * 0.5;
+                float cy = h * 0.5;
+                if (box <= 15) {
+                    float t = max(1.0, h / 10.0);
+                    float cov = 0.0;
+                    if (abs(py - cy) <= t) {
+                        if ((box & 1) != 0 && px <= cx) cov = 1.0;
+                        if ((box & 2) != 0 && px >= cx) cov = 1.0;
+                    }
+                    if (abs(px - cx) <= t) {
+                        if ((box & 4) != 0 && py <= cy) cov = 1.0;
+                        if ((box & 8) != 0 && py >= cy) cov = 1.0;
+                    }
+                    return cov;
+                }
+                if (box == 16) return 1.0;                       // full block
+                if (box == 17) return px <= cx ? 1.0 : 0.0;      // left half
+                if (box == 18) return px >= cx ? 1.0 : 0.0;      // right half
+                if (box == 19) return py <= cy ? 1.0 : 0.0;      // top half
+                if (box == 20) return py >= cy ? 1.0 : 0.0;      // bottom half
+                if (box == 25) return 0.25;                      // light shade
+                if (box == 26) return 0.5;                       // medium shade
+                if (box == 27) return 0.75;                      // dark shade
+                return 0.0;
+            }
+
             void main() {
-                float coverage = texture(u_atlas, v_uv).r;
+                float coverage = (v_box > 0)
+                    ? boxCoverage(v_box, v_local, u_cellPx, v_cellW)
+                    : texture(u_atlas, v_uv).r;
                 vec3 color = mix(v_bg, v_fg, coverage);
                 float alpha = mix(u_bgOpacity, 1.0, coverage);
 
