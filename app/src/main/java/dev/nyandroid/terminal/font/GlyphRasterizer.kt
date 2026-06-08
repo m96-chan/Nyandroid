@@ -101,6 +101,28 @@ class GlyphRasterizer(
     }
 
     /**
+     * Rasterises a base codepoint with a single combining mark composed onto it
+     * (e.g. "e" + U+0301 → "é"), so diacritics render as one grapheme (#7).
+     */
+    fun rasterizeComposedInto(
+        codePoint: Int, combining: Int, bold: Boolean, italic: Boolean,
+        out: java.nio.ByteBuffer, glyphWidth: Int = metrics.width,
+    ): Int {
+        val bmp = if (glyphWidth == metrics.width) reusableBitmap else ensureWideBitmap(glyphWidth)
+        bmp.eraseColor(Color.TRANSPARENT)
+        val c = if (glyphWidth == metrics.width) canvas else Canvas(bmp)
+        val text = buildString {
+            appendCodePoint(codePoint)
+            appendCodePoint(combining)
+        }
+        c.drawText(text, 0f, metrics.baseline.toFloat(), bestPaintFor(codePoint, bold, italic))
+        out.clear()
+        bmp.copyPixelsToBuffer(out)
+        out.flip()
+        return glyphWidth * metrics.height
+    }
+
+    /**
      * Rasterises a ligature (sequence of codepoints rendered as one glyph).
      * The result spans [cellCount] cells wide.
      */

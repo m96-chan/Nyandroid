@@ -56,9 +56,14 @@ class GlyphAtlas(private val rasterizer: GlyphRasterizer) {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
     }
 
-    fun spriteFor(codePoint: Int, bold: Boolean, italic: Boolean, wide: Boolean = false): Sprite {
+    fun spriteFor(
+        codePoint: Int, bold: Boolean, italic: Boolean,
+        wide: Boolean = false, combining: Int = 0,
+    ): Sprite {
         val styleBits = (if (bold) 1 else 0) or (if (italic) 2 else 0) or (if (wide) 4 else 0)
-        val key = (codePoint.toLong() and 0xFFFFFFFFL) or (styleBits.toLong() shl 40)
+        // Layout: codepoint[0..31], style[40..42], combining[43..63].
+        val key = (codePoint.toLong() and 0xFFFFFFFFL) or
+            (styleBits.toLong() shl 40) or (combining.toLong() shl 43)
         cache[key]?.let { return it }
 
         val glyphW = if (wide) cellW * 2 else cellW
@@ -88,7 +93,11 @@ class GlyphAtlas(private val rasterizer: GlyphRasterizer) {
             y = sr * cellH
         }
 
-        rasterizer.rasterizeInto(codePoint, bold, italic, wideCoverage, glyphW)
+        if (combining != 0) {
+            rasterizer.rasterizeComposedInto(codePoint, combining, bold, italic, wideCoverage, glyphW)
+        } else {
+            rasterizer.rasterizeInto(codePoint, bold, italic, wideCoverage, glyphW)
+        }
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textureId)
         GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
         GLES30.glTexSubImage2D(
