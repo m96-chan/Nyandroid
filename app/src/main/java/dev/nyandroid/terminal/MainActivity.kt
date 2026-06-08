@@ -290,6 +290,12 @@ class MainActivity : AppCompatActivity() {
         return container.firstLeaf()
     }
 
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        // The SurfaceView re-lays out on size change; just nudge a redraw (#40).
+        activeTerminalView?.requestLayout()
+    }
+
     override fun onDestroy() {
         tabManager.destroyAll()
         TerminalService.stop(this)

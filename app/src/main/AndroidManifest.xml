@@ -29,18 +29,26 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Desktop windowing (Android 16): adaptive, freeform-resizable. -->
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
+        android:resizeableActivity="true"
         android:supportsRtl="false"
         android:theme="@style/Theme.Nyandroid">
 
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|density"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|density|uiMode"
             android:exported="true"
+            android:resizeableActivity="true"
             android:windowSoftInputMode="adjustNothing|stateAlwaysVisible">
+            <layout
+                android:defaultHeight="600dp"
+                android:defaultWidth="900dp"
+                android:minHeight="200dp"
+                android:minWidth="300dp" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
