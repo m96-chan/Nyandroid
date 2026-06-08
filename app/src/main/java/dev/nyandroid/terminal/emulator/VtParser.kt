@@ -28,6 +28,9 @@ class VtParser(
     private var state = State.GROUND
 
     private val params = IntArray(MAX_PARAMS)
+    /** Marks params that were colon-joined to the previous one (SGR sub-params). */
+    private val paramIsSub = BooleanArray(MAX_PARAMS)
+    private var nextParamIsSub = false
     private var paramCount = 0
     private var currentParam = -1
     private var privateMarker = false
@@ -123,7 +126,9 @@ class VtParser(
         currentParam = -1
         privateMarker = false
         intermediateChar = 0
+        nextParamIsSub = false
         params.fill(0)
+        paramIsSub.fill(false)
     }
 
     private fun csi(b: Int) {
@@ -135,6 +140,7 @@ class VtParser(
                 currentParam = currentParam * 10 + (b - '0'.code)
             }
             b == ';'.code -> pushParam()
+            b == ':'.code -> { pushParam(); nextParamIsSub = true } // SGR sub-param
             b in 0x20..0x2F -> intermediateChar = b
             b in 0x40..0x7E -> {
                 pushParam()
@@ -147,9 +153,11 @@ class VtParser(
 
     private fun pushParam() {
         if (paramCount < MAX_PARAMS) {
+            paramIsSub[paramCount] = nextParamIsSub
             params[paramCount++] = if (currentParam < 0) 0 else currentParam
         }
         currentParam = -1
+        nextParamIsSub = false
     }
 
     private fun param(index: Int, default: Int): Int {
@@ -179,7 +187,7 @@ class VtParser(
             'S' -> grid.scrollUp(param(0, 1))
             'T' -> grid.scrollDown(param(0, 1))
             'r' -> grid.setScrollRegion(param(0, 1), param(1, grid.rows))
-            'm' -> grid.applySgr(params, paramCount)
+            'm' -> grid.applySgr(params, paramIsSub, paramCount)
             'h' -> setMode(true)
             'l' -> setMode(false)
             's' -> grid.saveCursor()
@@ -221,6 +229,7 @@ class VtParser(
             1003 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_ANY else TerminalGrid.MOUSE_NONE)
             1006 -> grid.setMouseSgrFormat(enable)      // SGR extended mouse
             2004 -> grid.setBracketedPasteMode(enable)  // bracketed paste
+            2026 -> grid.setSynchronizedUpdate(enable)  // synchronized output
         }
     }
 
@@ -260,6 +269,7 @@ class VtParser(
         when (code) {
             4 -> parseOsc4(payload)      // palette color
             7 -> parseOsc7(payload)            // CWD reporting
+            8 -> parseOsc8(payload)            // hyperlink
             10 -> parseOscColor(payload) { TerminalColors.DEFAULT_FG = it } // fg
             11 -> parseOscColor(payload) { TerminalColors.DEFAULT_BG = it } // bg
             12 -> parseOscColor(payload) { TerminalColors.CURSOR = it }     // cursor
@@ -292,6 +302,14 @@ class VtParser(
         if (slashIdx < 0) return
         val path = rest.substring(slashIdx)
         grid.currentWorkingDirectory = path
+    }
+
+    private fun parseOsc8(payload: String) {
+        // Format: params;URI  (params is usually empty or "id=..."). Empty URI
+        // closes the current hyperlink.
+        val semi = payload.indexOf(';')
+        val uri = if (semi >= 0) payload.substring(semi + 1) else ""
+        grid.setHyperlink(uri.ifEmpty { null })
     }
 
     private fun parseOsc133(payload: String) {

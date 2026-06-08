@@ -28,6 +28,14 @@ class FrameSnapshot {
     var styleFlags: IntArray = IntArray(0)
         private set
 
+    /** Per-cell underline colour (`-1` = use foreground). SGR 58/59. */
+    var underlineColor: IntArray = IntArray(0)
+        private set
+
+    /** Per-cell combining mark codepoint (`0` = none). */
+    var combining: IntArray = IntArray(0)
+        private set
+
     /** Monotonically increasing; lets the renderer skip unchanged frames. */
     var revision: Long = 0
         private set
@@ -39,6 +47,13 @@ class FrameSnapshot {
     /** DECSCUSR cursor shape (0-6). */
     var cursorShape: Int = 0
 
+    /** Inclusive dirty row range since the previous frame (for partial upload). */
+    var dirtyTop: Int = 0
+    var dirtyBottom: Int = 0
+
+    /** kitty graphics-protocol images to draw over the grid this frame. */
+    var graphics: List<TerminalGrid.GraphicsPlacement> = emptyList()
+
     fun ensureCapacity(cols: Int, rows: Int) {
         if (this.cols == cols && this.rows == rows) return
         this.cols = cols
@@ -48,6 +63,8 @@ class FrameSnapshot {
         fg = IntArray(n)
         bg = IntArray(n)
         styleFlags = IntArray(n)
+        underlineColor = IntArray(n)
+        combining = IntArray(n)
     }
 
     fun markUpdated(revision: Long) {
