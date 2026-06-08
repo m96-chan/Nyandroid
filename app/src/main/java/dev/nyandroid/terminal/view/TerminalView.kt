@@ -7,16 +7,20 @@ import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
 import android.view.ActionMode
+import android.view.DragEvent
 import android.view.GestureDetector
+import android.view.InputDevice
 import android.view.ScaleGestureDetector
 import android.view.KeyEvent
 import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
+import android.view.PointerIcon
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewConfiguration
+import android.widget.PopupMenu
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -215,6 +219,12 @@ class TerminalView @JvmOverloads constructor(
         controller.mouseTrackingMode() != TerminalGrid.MOUSE_NONE
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Right/middle mouse buttons are handled in onGenericMotionEvent (#42).
+        if (event.isFromSource(InputDevice.SOURCE_MOUSE) &&
+            event.buttonState and (MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY) != 0
+        ) {
+            return true
+        }
         // Pinch zoom always gets a chance.
         scaleDetector.onTouchEvent(event)
         if (scaling) return true
@@ -466,6 +476,98 @@ class TerminalView @JvmOverloads constructor(
         imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
     }
 
+    // --- Desktop: precise mouse / trackpad (#42) ----------------------------
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (::controller.isInitialized && event.isFromSource(InputDevice.SOURCE_MOUSE)) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_BUTTON_PRESS -> when (event.actionButton) {
+                    MotionEvent.BUTTON_SECONDARY -> { showMouseMenu(event.x, event.y); return true }
+                    MotionEvent.BUTTON_TERTIARY -> { pasteFromClipboard(); return true }
+                }
+                MotionEvent.ACTION_SCROLL -> {
+                    val v = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                    if (v != 0f) {
+                        if (isMouseMode()) {
+                            val (row, col) = touchToCell(event.x, event.y)
+                            val btn = if (v > 0) MouseEncoder.BUTTON_SCROLL_UP else MouseEncoder.BUTTON_SCROLL_DOWN
+                            controller.write(
+                                MouseEncoder.encode(btn, col + 1, row + 1, release = false, controller.mouseSgrFormat()),
+                            )
+                        } else {
+                            controller.scrollViewport(if (v > 0) WHEEL_LINES else -WHEEL_LINES)
+                        }
+                        return true
+                    }
+                }
+            }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
+    /** I-beam over text, hand over a URL/hyperlink (desktop pointer feedback). */
+    override fun onResolvePointerIcon(event: MotionEvent, pointerIndex: Int): PointerIcon {
+        val type = if (::controller.isInitialized) {
+            val (row, col) = touchToCell(event.x, event.y)
+            val onUrl = controller.hyperlinkAt(row, col) != null || controller.urlAt(row, col) != null
+            if (onUrl) PointerIcon.TYPE_HAND else PointerIcon.TYPE_TEXT
+        } else {
+            PointerIcon.TYPE_TEXT
+        }
+        return PointerIcon.getSystemIcon(context, type)
+    }
+
+    private fun showMouseMenu(x: Float, y: Float) {
+        val popup = PopupMenu(context, this)
+        popup.menu.add(0, MENU_COPY, 0, "Copy")
+        popup.menu.add(0, MENU_PASTE, 1, "Paste")
+        popup.menu.add(0, MENU_FIND, 2, "Find")
+        popup.menu.add(0, MENU_NEW_TAB, 3, "New Tab")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_COPY -> onKeyBindingAction?.invoke("copy_to_clipboard", "")
+                MENU_PASTE -> { pasteFromClipboard(); true }
+                MENU_FIND -> onKeyBindingAction?.invoke("show_scrollback", "")
+                MENU_NEW_TAB -> onKeyBindingAction?.invoke("new_tab", "")
+                else -> false
+            } ?: false
+        }
+        popup.show()
+    }
+
+    // --- Desktop: drag & drop (#43) -----------------------------------------
+
+    override fun onDragEvent(event: DragEvent): Boolean {
+        when (event.action) {
+            DragEvent.ACTION_DRAG_STARTED -> return true
+            DragEvent.ACTION_DROP -> {
+                if (!::controller.isInitialized) return false
+                val clip = event.clipData ?: return false
+                val sb = StringBuilder()
+                for (i in 0 until clip.itemCount) {
+                    val item = clip.getItemAt(i)
+                    val uri = item.uri
+                    if (uri != null) {
+                        if (sb.isNotEmpty()) sb.append(' ')
+                        sb.append(shellQuote(uri.path ?: uri.toString()))
+                    } else {
+                        item.coerceToText(context)?.toString()?.let { sb.append(it) }
+                    }
+                }
+                if (sb.isNotEmpty()) controller.paste(sb.toString())
+                return true
+            }
+        }
+        return true
+    }
+
+    private fun shellQuote(s: String): String =
+        if (s.any { it == ' ' || it == '\'' || it == '"' || it == '(' || it == ')' || it == '&' }) {
+            "'" + s.replace("'", "'\\''") + "'"
+        } else {
+            s
+        }
+
     fun shutdown() {
         handler.removeCallbacksAndMessages(null)
         // Controller lifecycle is managed by TabManager, not here.
@@ -633,5 +735,8 @@ class TerminalView @JvmOverloads constructor(
         const val MENU_PASTE = 2
         const val MIN_FONT_PX = 16f
         const val MAX_FONT_PX = 80f
+        const val MENU_FIND = 3
+        const val MENU_NEW_TAB = 4
+        const val WHEEL_LINES = 3
     }
 }
