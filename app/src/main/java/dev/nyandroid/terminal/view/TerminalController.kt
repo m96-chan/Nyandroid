@@ -1,5 +1,7 @@
 package dev.nyandroid.terminal.view
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -82,10 +84,20 @@ class TerminalController(
     /** Callback when connection state changes. */
     var onConnectionStateChanged: ((String) -> Unit)? = null
 
+    /** Latest window title from OSC 0/2 (#34). */
+    var title: String = ""
+        private set
+
+    /** Invoked when the window title (OSC 0/2) changes. */
+    var onTitle: ((String) -> Unit)? = null
+
     init {
         emulator.onChange = { renderThread.requestRender() }
         emulator.onBell = { performBell() }
         emulator.onNotification = { code, payload -> showNotification(code, payload) }
+        emulator.onTitle = { t -> title = t; onTitle?.invoke(t) }
+        emulator.onClipboardWrite = { text -> writeSystemClipboard(text) }   // OSC 52 (#29)
+        emulator.clipboardProvider = { readSystemClipboard() }
         backend.onOutput = { buffer, length -> emulator.feed(buffer, length) }
         backend.onExit = { status -> Log.i(TAG, "Shell exited with status $status") }
         backend.onStateChanged = { state ->
@@ -125,6 +137,24 @@ class TerminalController(
         // Visual bell (screen flash) — handled by the view.
         onVisualBell?.invoke()
     }
+
+    // --- Clipboard (OSC 52, #29) / focus (#35) ------------------------------
+
+    private fun clipboard(): ClipboardManager =
+        appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+    private fun writeSystemClipboard(text: String) {
+        try {
+            clipboard().setPrimaryClip(ClipData.newPlainText("terminal", text))
+        } catch (_: Exception) { /* ignore */ }
+    }
+
+    private fun readSystemClipboard(): String? = try {
+        clipboard().primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString()
+    } catch (_: Exception) { null }
+
+    /** Reports window focus in/out if the app enabled DECSET 1004 (#35). */
+    fun reportFocus(focused: Boolean) = emulator.reportFocus(focused)
 
     private fun showNotification(code: Int, payload: String) {
         val parsed = when (code) {

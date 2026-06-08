@@ -112,6 +112,24 @@ object KeyEncoder {
         return null
     }
 
+    /**
+     * Kitty-only encoding for an arbitrary key event (used for key-release on
+     * key-up). Returns null unless the kitty keyboard protocol is active and the
+     * event should be reported (e.g. release events at Level 2).
+     */
+    fun encodeKittyEvent(
+        event: KeyEvent, kittyFlags: Int,
+        virtualCtrl: Boolean = false, virtualAlt: Boolean = false,
+    ): ByteArray? {
+        if (kittyFlags == 0) return null
+        return encodeKitty(
+            event, kittyFlags,
+            event.isCtrlPressed || virtualCtrl,
+            event.isAltPressed || virtualAlt,
+            event.isShiftPressed,
+        )
+    }
+
     // --- kitty keyboard protocol (CSI u) -------------------------------------
 
     /**
@@ -127,7 +145,15 @@ object KeyEncoder {
         event: KeyEvent, flags: Int, ctrl: Boolean, alt: Boolean, shift: Boolean,
     ): ByteArray? {
         val reportAll = flags and 0x8 != 0
+        val reportEvents = flags and 0x2 != 0   // Level 2: key event types
+        val reportText = flags and 0x10 != 0    // Level 3: associated text
         val mods = 1 + (if (shift) 1 else 0) + (if (alt) 2 else 0) + (if (ctrl) 4 else 0)
+        // 1 = press, 2 = repeat, 3 = release.
+        val eventType = when {
+            event.action == KeyEvent.ACTION_UP -> 3
+            event.repeatCount > 0 -> 2
+            else -> 1
+        }
 
         val keyNum = when (event.keyCode) {
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> 13
@@ -144,9 +170,23 @@ object KeyEncoder {
 
         // Plain printable with no modifiers is sent as text unless the app asked
         // for all keys as escape codes.
-        if (!reportAll && mods == 1 && keyNum >= 32 && keyNum != 127) return null
+        // Release / repeat events are reported only when Level 2 is active.
+        if (eventType != 1 && !reportEvents) return null
+        val plainText = mods == 1 && keyNum >= 32 && keyNum != 127
+        if (eventType == 1 && !reportAll && plainText && !reportEvents) return null
 
-        val body = if (mods > 1) "$keyNum;${mods}u" else "${keyNum}u"
+        val needEvent = reportEvents && eventType != 1
+        val sb = StringBuilder().append(keyNum)
+        if (mods > 1 || needEvent) {
+            sb.append(';').append(mods)
+            if (needEvent) sb.append(':').append(eventType)
+        }
+        if (reportText && eventType != 3) {
+            val text = event.unicodeChar
+            if (text != 0) sb.append(';').append(text)
+        }
+        sb.append('u')
+        val body = sb.toString()
         return "\u001B[$body".toByteArray(StandardCharsets.US_ASCII)
     }
 

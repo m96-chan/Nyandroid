@@ -35,9 +35,29 @@ class TerminalEmulator(
     /** Invoked for OSC 99/777 notifications: (oscCode, payload). */
     var onNotification: ((Int, String) -> Unit)? = null
 
+    /** Invoked for OSC 0/2 window-title changes. */
+    var onTitle: ((String) -> Unit)? = null
+
+    /** OSC 52: write decoded text to the system clipboard. */
+    var onClipboardWrite: ((String) -> Unit)? = null
+
+    /** OSC 52 read: supplies current clipboard text for a `?` query. */
+    var clipboardProvider: (() -> String?)? = null
+
     init {
         parser.onBell = { onBell?.invoke() }
         parser.onNotification = { code, payload -> onNotification?.invoke(code, payload) }
+        parser.onTitle = { title -> onTitle?.invoke(title) }
+        parser.onClipboardWrite = { text -> onClipboardWrite?.invoke(text) }
+        parser.clipboardProvider = { clipboardProvider?.invoke() }
+    }
+
+    /** Sends a focus in/out report (CSI I / CSI O) if DECSET 1004 is enabled. */
+    fun reportFocus(focused: Boolean) {
+        synchronized(lock) {
+            if (!grid.focusReporting) return
+        }
+        respond(if (focused) FOCUS_IN else FOCUS_OUT)
     }
 
     /** Active kitty keyboard-protocol flags (0 = legacy encoding). */
@@ -177,4 +197,9 @@ class TerminalEmulator(
             true
         } else false
     }.also { if (it) onChange?.invoke() }
+
+    private companion object {
+        val FOCUS_IN = "\u001B[I".toByteArray(Charsets.US_ASCII)
+        val FOCUS_OUT = "\u001B[O".toByteArray(Charsets.US_ASCII)
+    }
 }

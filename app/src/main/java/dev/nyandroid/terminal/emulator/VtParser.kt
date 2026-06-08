@@ -21,6 +21,19 @@ class VtParser(
     /** Callback for OSC 99/777 notifications: (oscCode, payload). */
     var onNotification: ((Int, String) -> Unit)? = null
 
+    /** Callback for OSC 0/2 window-title changes. */
+    var onTitle: ((String) -> Unit)? = null
+
+    /** OSC 52: write decoded text to the system clipboard. */
+    var onClipboardWrite: ((String) -> Unit)? = null
+
+    /** OSC 52 read: supplies current clipboard text for a `?` query. */
+    var clipboardProvider: (() -> String?)? = null
+
+    /** clipboard_control: whether apps may read/write the clipboard via OSC 52. */
+    var clipboardWriteAllowed = true
+    var clipboardReadAllowed = true
+
     /** Callback for BEL (terminal bell). */
     var onBell: (() -> Unit)? = null
     private enum class State { GROUND, ESCAPE, CSI, OSC, OSC_ESC, CHARSET, APC, APC_ESC }
@@ -227,6 +240,7 @@ class VtParser(
             1000 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_X10 else TerminalGrid.MOUSE_NONE)
             1002 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_BUTTON else TerminalGrid.MOUSE_NONE)
             1003 -> grid.setMouseTracking(if (enable) TerminalGrid.MOUSE_ANY else TerminalGrid.MOUSE_NONE)
+            1004 -> grid.setFocusReporting(enable)       // focus in/out reporting
             1006 -> grid.setMouseSgrFormat(enable)      // SGR extended mouse
             2004 -> grid.setBracketedPasteMode(enable)  // bracketed paste
             2026 -> grid.setSynchronizedUpdate(enable)  // synchronized output
@@ -267,9 +281,11 @@ class VtParser(
         val code = s.substring(0, semi).toIntOrNull() ?: return
         val payload = s.substring(semi + 1)
         when (code) {
+            0, 2 -> onTitle?.invoke(payload)   // icon+title / window title
             4 -> parseOsc4(payload)      // palette color
             7 -> parseOsc7(payload)            // CWD reporting
             8 -> parseOsc8(payload)            // hyperlink
+            52 -> parseOsc52(payload)          // clipboard read/write
             10 -> parseOscColor(payload) { TerminalColors.DEFAULT_FG = it } // fg
             11 -> parseOscColor(payload) { TerminalColors.DEFAULT_BG = it } // bg
             12 -> parseOscColor(payload) { TerminalColors.CURSOR = it }     // cursor
@@ -310,6 +326,26 @@ class VtParser(
         val semi = payload.indexOf(';')
         val uri = if (semi >= 0) payload.substring(semi + 1) else ""
         grid.setHyperlink(uri.ifEmpty { null })
+    }
+
+    private fun parseOsc52(payload: String) {
+        // Format: <targets>;<base64 | ?>. targets: c/p/s/0-7 (default c).
+        val semi = payload.indexOf(';')
+        val data = if (semi >= 0) payload.substring(semi + 1) else return
+        if (data == "?") {
+            if (!clipboardReadAllowed) return
+            val text = clipboardProvider?.invoke() ?: ""
+            val b64 = java.util.Base64.getEncoder()
+                .encodeToString(text.toByteArray(StandardCharsets.UTF_8))
+            val targets = if (semi >= 0) payload.substring(0, semi).ifEmpty { "c" } else "c"
+            respond("\u001B]52;$targets;$b64\u0007".toByteArray(StandardCharsets.UTF_8))
+        } else {
+            if (!clipboardWriteAllowed) return
+            val decoded = try {
+                String(java.util.Base64.getMimeDecoder().decode(data), StandardCharsets.UTF_8)
+            } catch (_: Exception) { return }
+            onClipboardWrite?.invoke(decoded)
+        }
     }
 
     private fun parseOsc133(payload: String) {

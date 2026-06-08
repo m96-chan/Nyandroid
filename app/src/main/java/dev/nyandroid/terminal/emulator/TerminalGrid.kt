@@ -139,6 +139,10 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
         val width: Int,
         val height: Int,
         val data: ByteArray,
+        /** kitty image id (`i=`); 0 if unspecified. */
+        val imageId: Int = 0,
+        /** z-index (`z=`); images are drawn in ascending z, then insertion order. */
+        val z: Int = 0,
     )
 
     val graphicsPlacements = mutableListOf<GraphicsPlacement>()
@@ -184,19 +188,29 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
                     if (decoded.isNotEmpty()) {
                         val cols = params['c']?.toIntOrNull() ?: 1
                         val rows = params['r']?.toIntOrNull() ?: 1
+                        val imageId = params['i']?.toIntOrNull() ?: 0
+                        val z = params['z']?.toIntOrNull() ?: 0
                         graphicsPlacements.add(
                             GraphicsPlacement(
                                 graphicsAccumId, cursorRow, cursorCol,
-                                cols, rows, decoded,
+                                cols, rows, decoded, imageId, z,
                             ),
                         )
+                        graphicsPlacements.sortBy { it.z }
                     }
                     graphicsDataAccumulator.setLength(0)
                 }
             }
             "d" -> {
-                // Delete placements.
-                graphicsPlacements.clear()
+                // Delete placements. d=a/A: all; d=i/I with i=<id>: by image id.
+                when (params['d']?.firstOrNull()?.lowercaseChar() ?: 'a') {
+                    'i' -> {
+                        val id = params['i']?.toIntOrNull()
+                        if (id != null) graphicsPlacements.removeAll { it.imageId == id }
+                        else graphicsPlacements.clear()
+                    }
+                    else -> graphicsPlacements.clear()
+                }
             }
         }
     }
@@ -878,6 +892,14 @@ class TerminalGrid(cols: Int, rows: Int, scrollbackLines: Int = DEFAULT_SCROLLBA
 
     fun setMouseSgrFormat(enable: Boolean) {
         mouseSgrFormat = enable
+    }
+
+    /** DECSET 1004: report window focus in/out. */
+    var focusReporting = false
+        private set
+
+    fun setFocusReporting(enable: Boolean) {
+        focusReporting = enable
     }
 
     /** DECSET 2026 synchronized output. */
