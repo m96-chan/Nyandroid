@@ -77,6 +77,7 @@ class SettingsActivity : AppCompatActivity() {
 
         // Colors
         root.addView(sectionHeader("Colors"))
+        root.addView(themeRow())
         root.addView(colorRow("foreground", "Foreground", entries["foreground"] ?: "#D0D0D0"))
         root.addView(colorRow("background", "Background", entries["background"] ?: "#0B0B0B"))
 
@@ -103,6 +104,49 @@ class SettingsActivity : AppCompatActivity() {
         })
 
         setContentView(scroll)
+    }
+
+    /** A built-in theme picker; selecting one writes its colours into [entries]. */
+    private fun themeRow(): LinearLayout {
+        val dp = resources.displayMetrics.density
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val pad = (8 * dp).toInt()
+            setPadding(0, pad, 0, pad)
+        }
+        row.addView(TextView(this).apply {
+            text = "Theme"
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+        })
+        val schemes = dev.nyandroid.terminal.emulator.ColorScheme.BUILTIN_SCHEMES
+        val names = schemes.map { it.name }
+        val spinner = android.widget.Spinner(this).apply {
+            adapter = android.widget.ArrayAdapter(
+                this@SettingsActivity,
+                android.R.layout.simple_spinner_dropdown_item, names,
+            )
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    applyTheme(schemes[pos])
+                }
+                override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+            }
+        }
+        row.addView(spinner, LinearLayout.LayoutParams((160 * dp).toInt(), WRAP_CONTENT))
+        return row
+    }
+
+    /** Writes a scheme's colours into the pending config entries. */
+    private fun applyTheme(scheme: dev.nyandroid.terminal.emulator.ColorScheme) {
+        entries["foreground"] = "#%06X".format(scheme.foreground)
+        entries["background"] = "#%06X".format(scheme.background)
+        entries["cursor"] = "#%06X".format(scheme.cursor)
+        for (i in scheme.base16.indices) {
+            entries["color$i"] = "#%06X".format(scheme.base16[i])
+        }
     }
 
     private fun sectionHeader(title: String): TextView {

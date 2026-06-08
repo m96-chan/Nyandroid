@@ -32,9 +32,19 @@ class TerminalEmulator(
     /** Invoked on BEL (terminal bell). */
     var onBell: (() -> Unit)? = null
 
+    /** Invoked for OSC 99/777 notifications: (oscCode, payload). */
+    var onNotification: ((Int, String) -> Unit)? = null
+
     init {
         parser.onBell = { onBell?.invoke() }
+        parser.onNotification = { code, payload -> onNotification?.invoke(code, payload) }
     }
+
+    /** Active kitty keyboard-protocol flags (0 = legacy encoding). */
+    fun kittyKeyboardFlags(): Int = synchronized(lock) { grid.kittyKeyboardFlags }
+
+    /** Row of the most recent shell-integration prompt mark, or -1. */
+    fun promptRow(): Int = synchronized(lock) { grid.promptStartRow }
 
     val cols: Int get() = synchronized(lock) { grid.cols }
     val rows: Int get() = synchronized(lock) { grid.rows }

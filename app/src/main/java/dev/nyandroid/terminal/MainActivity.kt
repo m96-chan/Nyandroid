@@ -28,6 +28,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tabManager: TabManager
     private lateinit var tabBar: TabBar
     private lateinit var terminalArea: FrameLayout
+    private lateinit var bellOverlay: View
+    private lateinit var searchOverlay: dev.nyandroid.terminal.view.SearchOverlay
     private lateinit var config: KittyConfig
 
     /** The currently focused terminal view (in any pane). */
@@ -41,6 +43,7 @@ class MainActivity : AppCompatActivity() {
 
         config = KittyConfig.load(this)
         KittyConfig.applyColors(config)
+        dev.nyandroid.terminal.backend.ShellIntegration.deployScript(this)
         TerminalService.start(this)
 
         val density = resources.displayMetrics.density
@@ -57,6 +60,20 @@ class MainActivity : AppCompatActivity() {
 
         tabBar = TabBar(this, tabManager)
         terminalArea = FrameLayout(this)
+        bellOverlay = View(this).apply {
+            setBackgroundColor(0x66FFFFFF) // translucent white flash
+            visibility = View.GONE
+        }
+        searchOverlay = dev.nyandroid.terminal.view.SearchOverlay(this).apply {
+            visibility = View.GONE
+            onQuery = { query, forward -> activeTerminalView?.controller?.searchScrollback(query, forward) ?: false }
+            onClose = { visibility = View.GONE }
+        }
+
+        // Background blur behind the (optionally translucent) window (#22).
+        if (config.backgroundBlur > 0 && android.os.Build.VERSION.SDK_INT >= 31) {
+            window.setBackgroundBlurRadius(config.backgroundBlur)
+        }
 
         tabManager.onTabsChanged = {
             tabBar.rebuild()
@@ -76,8 +93,19 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             ),
         )
+        val terminalWrapper = FrameLayout(this).apply {
+            addView(terminalArea, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+            addView(bellOverlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT,
+            ))
+            addView(searchOverlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            ))
+        }
         container.addView(
-            terminalArea,
+            terminalWrapper,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -145,13 +173,21 @@ class MainActivity : AppCompatActivity() {
         tv.keyBindings = config.keyBindings
         tv.onKeyBindingAction = { action, args -> handleKeyAction(action, args) }
         tv.onFontSizeChanged = { newSizePx ->
-            val clamped = newSizePx.coerceIn(MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX)
-            if (clamped != currentFontSizePx) {
-                currentFontSizePx = clamped
-                // Font size changes require full rebuild — deferred.
-                Log.i("MainActivity", "Font size pinch to ${clamped}px (restart to apply)")
-            }
+            // The view already applied the resize live; just remember it.
+            currentFontSizePx = newSizePx.coerceIn(MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX)
         }
+        tv.onVisualBell = { flashVisualBell() }
+        // Apply config-driven rendering/bell knobs to this pane's controller.
+        applyConfigTo(tv)
+    }
+
+    private fun applyConfigTo(tv: TerminalView) {
+        val ctrl = tv.controller
+        ctrl.audioBellEnabled = config.enableAudioBell
+        ctrl.backgroundOpacity = config.backgroundOpacity
+        ctrl.ligaturesEnabled = config.ligaturesEnabled
+        ctrl.shellIntegrationEnabled = config.shellIntegration == "enabled"
+        tv.setBackgroundTranslucent(config.backgroundOpacity < 1f)
     }
 
     private fun setActiveTerminalView(tv: TerminalView) {
@@ -213,14 +249,34 @@ class MainActivity : AppCompatActivity() {
         "scroll_line_down" -> {
             activeTerminalView?.controller?.scrollViewport(1); true
         }
+        "next_layout" -> {
+            tabManager.activeTab?.splitContainer?.toggleOrientation(); true
+        }
+        "scroll_to_prompt" -> {
+            activeTerminalView?.controller?.scrollToPrompt(); true
+        }
+        "show_scrollback" -> {
+            searchOverlay.show(); true
+        }
         else -> false
     }
 
+    /** Briefly flashes the screen for a visual bell (#21). */
+    private fun flashVisualBell() {
+        bellOverlay.visibility = View.VISIBLE
+        bellOverlay.alpha = 1f
+        bellOverlay.animate().alpha(0f).setDuration(180).withEndAction {
+            bellOverlay.visibility = View.GONE
+        }.start()
+    }
+
     /** Find the leaf SplitContainer that currently has focus. */
-    private fun findFocusedLeaf(container: SplitContainer): SplitContainer? {
-        if (container.isLeaf()) return container
-        // Recursively search — simplified, returns first leaf for now.
-        return null
+    private fun findFocusedLeaf(container: SplitContainer): SplitContainer {
+        val focused = activeTerminalView
+        if (focused != null) {
+            container.leafContaining(focused)?.let { return it }
+        }
+        return container.firstLeaf()
     }
 
     override fun onDestroy() {

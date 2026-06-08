@@ -130,6 +130,48 @@ class SplitContainer(
     /** Returns true if this is a leaf node. */
     fun isLeaf(): Boolean = terminalView != null
 
+    /** The leaf whose terminal view is [tv], searching this subtree. */
+    fun leafContaining(tv: TerminalView): SplitContainer? = when {
+        terminalView === tv -> this
+        else -> first?.leafContaining(tv) ?: second?.leafContaining(tv)
+    }
+
+    /** The first (top-left) leaf in this subtree. */
+    fun firstLeaf(): SplitContainer = if (isLeaf()) this else first!!.firstLeaf()
+
+    /** All leaves in this subtree, in order. */
+    fun leaves(): List<SplitContainer> = if (isLeaf()) listOf(this) else {
+        (first?.leaves() ?: emptyList()) + (second?.leaves() ?: emptyList())
+    }
+
+    /**
+     * Re-orients this branch (kitty layout switch: tall ⇄ fat). No-op on leaves.
+     */
+    fun toggleOrientation() {
+        val layout = splitLayout ?: return
+        val f = first ?: return
+        val s = second ?: return
+        horizontal = !horizontal
+        layout.orientation = if (horizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        val dividerSize = (2 * resources.displayMetrics.density).toInt()
+        // child 0 = first, 1 = divider, 2 = second
+        layout.getChildAt(0).layoutParams = LinearLayout.LayoutParams(
+            if (horizontal) 0 else LayoutParams.MATCH_PARENT,
+            if (horizontal) LayoutParams.MATCH_PARENT else 0, 1f,
+        )
+        layout.getChildAt(1).layoutParams = LinearLayout.LayoutParams(
+            if (horizontal) dividerSize else LayoutParams.MATCH_PARENT,
+            if (horizontal) LayoutParams.MATCH_PARENT else dividerSize,
+        )
+        layout.getChildAt(2).layoutParams = LinearLayout.LayoutParams(
+            if (horizontal) 0 else LayoutParams.MATCH_PARENT,
+            if (horizontal) LayoutParams.MATCH_PARENT else 0, 1f,
+        )
+        layout.requestLayout()
+        f.toggleOrientation()
+        s.toggleOrientation()
+    }
+
     /** Get all controllers in this subtree. */
     fun allControllers(): List<TerminalController> {
         val result = mutableListOf<TerminalController>()

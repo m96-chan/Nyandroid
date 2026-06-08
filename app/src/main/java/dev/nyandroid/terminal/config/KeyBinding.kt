@@ -110,6 +110,7 @@ data class KeyBinding(
             "minus", "-" -> KeyEvent.KEYCODE_MINUS
             "equal", "equals", "+" -> KeyEvent.KEYCODE_EQUALS
             "plus" -> KeyEvent.KEYCODE_EQUALS // shift+= on most layouts
+            "slash", "/" -> KeyEvent.KEYCODE_SLASH
             else -> null
         }
     }

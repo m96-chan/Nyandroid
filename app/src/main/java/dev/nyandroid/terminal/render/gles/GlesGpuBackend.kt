@@ -28,11 +28,34 @@ import java.nio.FloatBuffer
  *  - ligatures render as multi-cell sprites;
  *  - colour emoji and kitty-graphics images render as RGBA textured quads.
  */
-class GlesGpuBackend(private val rasterizer: GlyphRasterizer) : GpuBackend {
+class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
 
-    private val metrics = rasterizer.metrics
+    private var rasterizer = rasterizer
+    private var metrics = rasterizer.metrics
     private val egl = EglCore()
-    private val atlas = GlyphAtlas(rasterizer)
+    private var atlas = GlyphAtlas(rasterizer)
+
+    /** A new rasteriser to swap in on the render thread (live font resize). */
+    @Volatile
+    private var pendingRasterizer: GlyphRasterizer? = null
+
+    /** Schedules a font/metrics change; applied at the next frame. */
+    fun scheduleFontChange(newRasterizer: GlyphRasterizer) {
+        pendingRasterizer = newRasterizer
+    }
+
+    private fun applyFontChange(newRasterizer: GlyphRasterizer) {
+        atlas.release()
+        if (emojiTextures.isNotEmpty()) {
+            GLES30.glDeleteTextures(emojiTextures.size, emojiTextures.values.toIntArray(), 0)
+            emojiTextures.clear()
+        }
+        rasterizer = newRasterizer
+        metrics = newRasterizer.metrics
+        atlas = GlyphAtlas(newRasterizer)
+        atlas.init()
+        lastCols = 0; lastRows = 0 // force full rebuild
+    }
 
     private var program: ShaderProgram? = null
     private var imageProgram: ShaderProgram? = null
@@ -169,6 +192,7 @@ class GlesGpuBackend(private val rasterizer: GlyphRasterizer) : GpuBackend {
 
     override fun renderFrame(frame: FrameSnapshot) {
         val program = this.program ?: return
+        pendingRasterizer?.let { applyFontChange(it); pendingRasterizer = null }
         cols = frame.cols
         rows = frame.rows
         val cellCount = cols * rows
@@ -224,9 +248,25 @@ class GlesGpuBackend(private val rasterizer: GlyphRasterizer) : GpuBackend {
         GLES30.glBindVertexArray(0)
 
         drawNonBlockCursor(frame, program)
+        collectEmoji(frame)
         drawImages(frame)
 
         egl.swapBuffers()
+    }
+
+    /** Scans the whole grid each frame so emoji on unchanged rows still draw. */
+    private fun collectEmoji(frame: FrameSnapshot) {
+        emojiDraws.clear()
+        val cellCount = cols * rows
+        for (i in 0 until cellCount) {
+            val cpv = frame.codePoints[i]
+            if (!isColorEmoji(cpv)) continue
+            val flags = frame.styleFlags[i]
+            val bold = flags and TerminalGrid.BOLD != 0
+            val italic = flags and TerminalGrid.ITALIC != 0
+            val w = if (flags and TerminalGrid.WIDE != 0) 2 else 1
+            emojiDraws.add(EmojiDraw(cpv, bold, italic, i % cols, i / cols, w))
+        }
     }
 
     /** Builds the instance data for one row in place (handles wide/ligature/emoji). */
@@ -253,9 +293,10 @@ class GlesGpuBackend(private val rasterizer: GlyphRasterizer) : GpuBackend {
             val wide = flags and TerminalGrid.WIDE != 0
 
             if (isColorEmoji(cpv)) {
+                // Background only; the colour glyph is drawn in the image pass
+                // (collected by a full-grid scan, not per dirty row).
                 val w = if (wide) 2 else 1
                 writeInstance(base, c, row, w, blank, fg, bg, deco, ul)
-                emojiDraws.add(EmojiDraw(cpv, bold, italic, c, row, w))
                 for (k in 1 until w) if (c + k < cols) rowCovered[c + k] = true
                 c += w; continue
             }
@@ -386,7 +427,6 @@ class GlesGpuBackend(private val rasterizer: GlyphRasterizer) : GpuBackend {
             drawTexturedQuad(tex, g.col * cellW, g.row * cellH, w, h)
         }
         GLES30.glBindVertexArray(0)
-        emojiDraws.clear()
     }
 
     private fun drawTexturedQuad(tex: Int, x: Float, y: Float, w: Float, h: Float) {

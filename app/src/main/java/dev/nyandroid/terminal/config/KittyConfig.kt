@@ -42,6 +42,15 @@ class KittyConfig private constructor(
     val tabBarEdge: String get() = get("tab_bar_edge", "top")
     val tabBarStyle: String get() = get("tab_bar_style", "separator")
 
+    // --- Window / rendering --------------------------------------------------
+    /** kitty `background_opacity` (0.0-1.0). */
+    val backgroundOpacity: Float get() = get("background_opacity", "1.0").toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f
+    /** kitty `background_blur` (0 = off, >0 = blur radius). */
+    val backgroundBlur: Int get() = get("background_blur", "0").toIntOrNull() ?: 0
+    /** kitty `disable_ligatures` (never / always / cursor). */
+    val disableLigatures: String get() = get("disable_ligatures", "never")
+    val ligaturesEnabled: Boolean get() = disableLigatures != "always"
+
     // --- Advanced ------------------------------------------------------------
     val term: String get() = get("term", "xterm-256color")
     val shellIntegration: String get() = get("shell_integration", "enabled")
@@ -63,30 +72,51 @@ class KittyConfig private constructor(
 
     companion object {
         private const val CONFIG_FILENAME = "kitty.conf"
+        private const val MAX_INCLUDE_DEPTH = 10
 
         /** Load config from app's files directory, or return defaults. */
         fun load(context: Context): KittyConfig {
             val file = File(context.filesDir, CONFIG_FILENAME)
-            return if (file.exists()) parse(file.readText()) else KittyConfig(emptyMap(), defaultKeyBindings())
+            return if (file.exists()) parse(file.readText(), file.parentFile) else {
+                KittyConfig(emptyMap(), defaultKeyBindings())
+            }
         }
 
-        /** Parse a kitty.conf string into a KittyConfig. */
-        fun parse(text: String): KittyConfig {
+        /**
+         * Parse a kitty.conf string into a KittyConfig. `include <path>`
+         * directives are resolved relative to [baseDir] (recursively).
+         */
+        fun parse(text: String, baseDir: File? = null): KittyConfig {
             val entries = mutableMapOf<String, String>()
+            val mapLines = StringBuilder()
+            parseInto(text, baseDir, entries, mapLines, depth = 0)
+            val bindings = KeyBinding.parseAll(mapLines.toString()).ifEmpty { defaultKeyBindings() }
+            return KittyConfig(entries, bindings)
+        }
+
+        private fun parseInto(
+            text: String, baseDir: File?,
+            entries: MutableMap<String, String>, mapLines: StringBuilder, depth: Int,
+        ) {
+            if (depth > MAX_INCLUDE_DEPTH) return
             for (line in text.lines()) {
                 val trimmed = line.trim()
                 if (trimmed.isEmpty() || trimmed.startsWith('#')) continue
-                // Handle 'include' directive (not recursive for now).
-                if (trimmed.startsWith("include ")) continue
-                // map directives are handled separately.
-                if (trimmed.startsWith("map ")) continue
-                val parts = trimmed.split(Regex("\\s+"), limit = 2)
-                if (parts.size == 2) {
-                    entries[parts[0]] = parts[1]
+                if (trimmed.startsWith("include ")) {
+                    val path = trimmed.removePrefix("include ").trim()
+                    val incFile = if (baseDir != null) File(baseDir, path) else File(path)
+                    if (incFile.exists()) {
+                        parseInto(incFile.readText(), incFile.parentFile, entries, mapLines, depth + 1)
+                    }
+                    continue
                 }
+                if (trimmed.startsWith("map ")) {
+                    mapLines.appendLine(trimmed)
+                    continue
+                }
+                val parts = trimmed.split(Regex("\\s+"), limit = 2)
+                if (parts.size == 2) entries[parts[0]] = parts[1]
             }
-            val bindings = KeyBinding.parseAll(text).ifEmpty { defaultKeyBindings() }
-            return KittyConfig(entries, bindings)
         }
 
         /** Apply the config's color scheme to the global palette. */
@@ -107,6 +137,9 @@ class KittyConfig private constructor(
             map ctrl+shift+0 change_font_size all 0
             map ctrl+shift+enter split_horizontal
             map ctrl+shift+d split_vertical
+            map ctrl+shift+l next_layout
+            map ctrl+shift+z scroll_to_prompt
+            map ctrl+shift+slash show_scrollback
         """.trimIndent())
     }
 }
