@@ -301,7 +301,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                 c += w; continue
             }
             if (wide) {
-                val sprite = atlas.spriteFor(cpv, bold, italic, wide = true)
+                val sprite = atlas.spriteFor(cpv, bold, italic, wide = true, combining = frame.combining[i])
                 writeInstance(base, c, row, 2, sprite, fg, bg, deco, ul)
                 if (c + 1 < cols) rowCovered[c + 1] = true
                 c += 2; continue
@@ -316,7 +316,7 @@ class GlesGpuBackend(rasterizer: GlyphRasterizer) : GpuBackend {
                     c += runLen; continue
                 }
             }
-            val sprite = atlas.spriteFor(cpv, bold, italic)
+            val sprite = atlas.spriteFor(cpv, bold, italic, combining = frame.combining[i])
             writeInstance(base, c, row, 1, sprite, fg, bg, deco, ul)
             c++
         }
