@@ -177,8 +177,19 @@ class MainActivity : AppCompatActivity() {
             currentFontSizePx = newSizePx.coerceIn(MIN_FONT_SIZE_PX, MAX_FONT_SIZE_PX)
         }
         tv.onVisualBell = { flashVisualBell() }
+        // Window/tab title from OSC 0/2 (#34).
+        tv.controller.onTitle = { t -> runOnUiThread { onTerminalTitleChanged(tv, t) } }
         // Apply config-driven rendering/bell knobs to this pane's controller.
         applyConfigTo(tv)
+    }
+
+    private fun onTerminalTitleChanged(tv: TerminalView, newTitle: String) {
+        val label = newTitle.ifBlank { "Terminal" }
+        tabManager.getTabs().firstOrNull { it.controller === tv.controller }?.let {
+            it.title = label
+            tabBar.rebuild()
+        }
+        if (tv === activeTerminalView) title = newTitle.ifBlank { getString(R.string.app_name) }
     }
 
     private fun applyConfigTo(tv: TerminalView) {

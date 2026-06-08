@@ -183,6 +183,21 @@ class TerminalView @JvmOverloads constructor(
         }
     }
 
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        // Key-release events are only emitted under the kitty keyboard protocol
+        // Level 2 (#39); legacy mode ignores key-up.
+        KeyEncoder.encodeKittyEvent(
+            event, controller.kittyKeyboardFlags(), virtualCtrl, virtualAlt,
+        )?.let { controller.write(it); return true }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        // Focus reporting (DECSET 1004, #35).
+        if (::controller.isInitialized) controller.reportFocus(hasWindowFocus)
+    }
+
     internal var extraKeysBar: ExtraKeysBar? = null
 
     /**
